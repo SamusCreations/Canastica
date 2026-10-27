@@ -1,69 +1,72 @@
-# GlassCart — iOS 26 Liquid Glass Household Grocery & Receipt Intelligence
+# Canastica
 
-GlassCart is a modern, multi-user household grocery, receipt OCR, shared shopping list, virtual pantry, and AI restock prediction web application designed with Apple's **iOS 26 "Liquid Glass"** aesthetic and powered by **Gemini 2.5 Multimodal AI** and **Supabase**.
+**Canastica** es una app para llevar las compras del súper en familia o entre compañeros de casa. Le tomas una foto a la factura y la app se encarga del resto: anota cada producto, lleva la cuenta de lo que se gasta, avisa cuando algo está por acabarse y ayuda a dividir los gastos entre quienes viven juntos.
 
-## ✨ Key Features
+Está pensada para Costa Rica: trabaja en colones (también en dólares), entiende las facturas de los supermercados del país y funciona cómodamente desde el teléfono.
 
-- **🎨 iOS 26 Liquid Glass UI**: Translucent frosted surfaces (`backdrop-filter: blur(28px) saturate(190%)`), luminous specular top-left rims, layered depth, ambient refractive orbs, spring-physics animations, and full **Dark & Light Mode** support.
-- **👥 Multi-User Households & Roles**:
-  - **Admin** (manages monthly budget, category allocations, and member roles) and **Member** roles.
-  - Invite code (`GLS-829`) and shareable link support.
-  - Every purchase, receipt, shopping list item, and pantry entry tracks and displays the creator's avatar.
-- **🧾 AI Multimodal Receipt Scanner**:
-  - Camera capture on mobile & drag-and-drop on desktop, plus 1-tap demo receipts.
-  - Extracts supermarket, date, line items, discounts, taxes, and grand total.
-  - Normalizes abbreviated receipt codes (`"LCH DOS PIN 1L"` → `"Milk Dos Pinos 1L"`) and assigns canonical product groups & categories.
-  - Side-by-side glass confirmation card with live sum validation (`Sum(items) - Discounts + Taxes == Grand Total`) and discrepancy warnings.
-  - Friendly blurry/unreadable photo detection with photography tips.
-- **✅ Realtime Shared Shopping List**:
-  - Natural language input (`"2 liters of milk, whole wheat bread, and laundry detergent"`), parsed by Gemini into structured items by aisle.
-  - **Semantic Auto-Cross-Off with Undo**: Automatically crosses off matching shopping list items when a receipt is saved, even when names differ (`"Milk (2 Liters)"` ↔ `"Milk Dos Pinos 1L"`).
-- **🔮 AI Restock Prediction Engine**:
-  - Normalizes all historical quantities to base units (`ml`, `g`, or `units`) so different package sizes (`1 Gal = 3,785 ml` vs. `2 × 900 ml = 1,800 ml`) are directly comparable.
-  - Computes a recency-weighted daily consumption rate (`baseUnits / day`) and scales the expected duration strictly to the **last quantity purchased**.
-  - Groups brand variants under canonical products, requires a configurable minimum purchase count (default `3`), and displays confidence levels (`High`, `Medium`, `Low`).
-  - Interactive **"Ran Out"** and **"Still Have Some"** feedback buttons that immediately recalibrate the model.
-- **📊 Dashboard, Analytics, Price History, Supermarket Comparator, Expense Splitting & Conversational AI**:
-  - Animated Liquid Glass Budget Ring, Category Bars, AI Insights Card, and Quick-Add Chips.
-  - Unit-normalized Price History & Spike Alerts + Supermarket Comparator matrix.
-  - Shared vs. Personal Expense Splitting with optimal `"Who Owes Whom"` settlements.
-  - Virtual Pantry with AI-estimated expiration dates.
-  - Conversational Gemini Assistant + Date-range CSV/Excel Export.
+---
 
-## 🚀 Running Locally
+## ¿Para quién es?
 
-```bash
-npm install
-cp .env.example .env   # fill in VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY
-npm run dev
-```
+- Familias que quieren saber cuánto gastan en el súper cada mes.
+- Personas que comparten casa y necesitan dividir las compras de forma justa.
+- Cualquiera que quiera dejar de comprar de más (o de quedarse sin café un lunes).
 
-Without Supabase credentials the app still opens: tap **"Probar con datos de ejemplo"** on the login screen to use the local demo household (saved only in that browser).
+---
 
-## 🔐 Accounts, households & data (Supabase)
+## Cómo funciona
 
-- **Login**: email + password with Supabase Auth (sign up, sign in, password reset). A `profiles` row is created automatically for every new user.
-- **Households**: after the first login the user creates a household (becomes **admin**) or joins one with an invite code. Invite links look like `https://your-app/?join=GLS-XXXXX`; opening one takes a new user straight to the join step.
-- **Data**: purchases, receipt items, shopping list, pantry, restock feedback, settlements and notifications are read from and written to Supabase. Changes from other members arrive in real time (Supabase Realtime) and the app also refreshes when the phone tab comes back to the foreground.
-- **Permissions (RLS)**: members only see their own households. Only admins can change the monthly budget, restock settings and member roles; any member can add supermarkets.
-- Currency, language and theme are per-device preferences.
+### 1. Crea tu hogar e invita a los demás
+Al registrarte creas un **hogar**. Desde ahí puedes invitar a las personas con las que vives mediante un enlace o un código. Todos ven la misma información y cada compra queda registrada a nombre de quien la pagó.
 
-## ☁️ Deploying Supabase Backend & Edge Functions
+### 2. Escanea tus facturas
+Toma una foto de la factura (o súbela desde la galería) y Canastica la lee por ti:
 
-1. Apply the PostgreSQL schema, Row Level Security (RLS) policies, Storage bucket, Realtime tables, `pg_cron` schedule and the auth/onboarding functions (enable the **pg_cron** extension in the dashboard first):
-   ```bash
-   supabase db push
-   ```
-   (See `supabase/migrations/`)
-2. In **Authentication → URL Configuration**, set the *Site URL* to where the app is hosted and add it to *Redirect URLs* (needed for email confirmation and password reset links). For local testing add `http://localhost:5173`.
-3. Deploy the `assistant` Edge Function and set its secrets (the function only answers signed-in users):
-   ```bash
-   supabase secrets set GEMINI_API_KEY=your_gemini_key
-   # Web origins allowed to call the function (comma separated). Without it only localhost / LAN IPs work.
-   supabase secrets set ALLOWED_ORIGINS=https://your-app-domain.com
-   # Optional: model fallback order
-   supabase secrets set GEMINI_MODELS=gemini-3.8-flash,gemini-3.6-flash,gemini-3.5-flash-lite
-   supabase functions deploy assistant
-   ```
-   (See `supabase/functions/assistant/index.ts`. The old `gemini-ai` function can be deleted:
-   `supabase functions delete gemini-ai`.)
+- **Entiende los nombres abreviados** de los tiquetes, como "LECHE DOS P", y los convierte en nombres claros como "Leche Dos Pinos".
+- **Reconoce productos por peso**, como carnes, frutas y verduras, y guarda cuántos kilos llevaste y a qué precio por kilo.
+- **Detecta las promociones y descuentos** y los aplica al producto correcto, para que sepas lo que realmente pagaste.
+- **Sabe que en Costa Rica el IVA ya viene incluido** en el precio, así que el total cuadra con el de la factura.
+- **Revisa que la suma coincida con el total impreso** y con la cantidad de artículos. Si algo no cuadra, te lo señala para que lo corrijas.
+- **Encuentra la fecha** aunque la factura no la traiga impresa, usando el código de la factura electrónica. Si no la encuentra, te pide confirmarla.
+- **Aprende de tus correcciones**: si corriges un producto una vez, la próxima factura lo reconoce solo.
+
+Antes de guardar puedes revisar y ajustar todo: nombres, categorías, cantidades, precios, quién pagó y si el producto es compartido o personal.
+
+Si por algún motivo la lectura automática no está disponible, puedes **registrar la factura a mano** con la foto al lado.
+
+### 3. Edita o elimina facturas cuando lo necesites
+Cada factura guardada se puede abrir para ver la foto original y el detalle de productos. Si te equivocaste en algo, puedes **editarla** o **eliminarla** en cualquier momento.
+
+### 4. Controla el presupuesto
+Define un presupuesto mensual para el hogar y sigue cómo va cada categoría (lácteos, carnes, frutas y verduras, limpieza, etc.). En el inicio verás de un vistazo cuánto llevas gastado, cuánto te queda y a qué ritmo vas, junto con un resumen del mes y un consejo práctico para ahorrar.
+
+### 5. Analiza tus gastos y precios
+La sección de **analítica** muestra en qué se va el dinero, cómo cambia el gasto mes a mes y cómo varían los precios de los productos que más compras, para que sepas cuándo algo subió y en qué supermercado conviene comprarlo.
+
+### 6. Lista de compras inteligente
+Arma la lista escribiendo como hablas ("2 litros de leche, pan y huevos") y la app la separa en productos. Cuando escaneas la factura, **los productos comprados se tachan solos** de la lista.
+
+### 7. Despensa y reposición
+Canastica lleva un registro de lo que hay en casa, en la refri, el congelador o la alacena, con una idea de cuándo vence cada cosa. Además **aprende cada cuánto compras cada producto** y te avisa cuando algo está por acabarse, para que lo agregues a la lista a tiempo.
+
+### 8. División de gastos
+Marca cada producto como compartido o personal. La app calcula cuánto le toca a cada quien, quién le debe a quién y permite registrar cuando alguien salda su parte.
+
+### 9. Asistente
+Puedes hacerle preguntas sobre tus compras, por ejemplo "¿cuánto gastamos en carne este mes?" o "¿qué se nos está por acabar?", y te responde con los datos de tu hogar.
+
+---
+
+## Otras características
+
+- Colones o dólares, en español o inglés.
+- Modo claro y oscuro.
+- Diseñada primero para el teléfono, pero también funciona en computadora.
+- Cada hogar ve solo su propia información, y las fotos de las facturas son privadas.
+- Los administradores del hogar pueden ajustar el presupuesto, los avisos de reposición y los permisos de los demás miembros.
+
+---
+
+## Estado del proyecto
+
+Canastica está en **fase de prueba**. Si encuentras un error o una factura que no se lea bien, cuéntanos para seguir mejorándola.
