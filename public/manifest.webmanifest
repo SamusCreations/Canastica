@@ -1,0 +1,28 @@
+{
+  "name": "Canastica — Compras del hogar",
+  "short_name": "Canastica",
+  "description": "Compras del hogar con IA: escanea tiquetes, lista compartida, despensa y presupuesto.",
+  "lang": "es-CR",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#4f7f27",
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "/icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

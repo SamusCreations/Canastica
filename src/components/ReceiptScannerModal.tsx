@@ -1,0 +1,1132 @@
+import React, { useRef, useState } from 'react';
+import {
+  AlertTriangle,
+  Camera,
+  CheckCircle2,
+  FileWarning,
+  Plus,
+  RefreshCw,
+  Sparkles,
+  Store,
+  Tag,
+  Trash2,
+  Upload,
+  User,
+  Users,
+  X,
+} from 'lucide-react';
+import {
+  normalizeReceiptProduct,
+  normalizeToBaseUnit,
+  scanReceiptImageWithAI,
+} from '../services/geminiAndSupabaseService';
+import {
+  CurrencyCode,
+  GroceryCategory,
+  HouseholdMember,
+  LanguageCode,
+  Purchase,
+  PurchaseItem,
+  SupermarketStore,
+  SupermarketType,
+} from '../types/grocery';
+import { formatCurrency, translateCategory } from '../utils/formatters';
+import { getTodayIso } from '../utils/dates';
+import { applyReceiptMemory, buildReceiptMemory } from '../lib/receiptMemory';
+
+interface EditableDraftItem {
+  id: string;
+  rawReceiptName: string;
+  normalizedName: string;
+  canonicalName: string;
+  category: GroceryCategory;
+  quantity: number;
+  unit: string;
+  unitPrice: number;
+  grossPrice: number;      // line amount before the item's promo
+  discount: number;        // promo attached to this item (positive)
+  discountLabel?: string | null;
+  totalPrice: number;      // what was actually paid for the line (gross - discount)
+  barcode?: string | null;
+  pricingMode?: 'unit' | 'multi' | 'weight';
+  needsReview?: boolean;
+  reviewReasons?: string[];
+  learnedFromHistory?: boolean;
+  isShared: boolean;
+}
+
+interface ReceiptScannerModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  members: HouseholdMember[];
+  currentMemberId: string;
+  categories: GroceryCategory[];
+  supermarkets: SupermarketStore[];
+  currency: CurrencyCode;
+  language: LanguageCode;
+  purchaseHistory?: Purchase[];
+  onCreateSupermarket: (store: Omit<SupermarketStore, 'id'>) => void;
+  onSavePurchase: (purchase: Purchase) => void;
+  /** When set, the modal opens on the confirmation step to edit this saved receipt */
+  editingPurchase?: Purchase | null;
+  onUpdatePurchase?: (purchase: Purchase) => void;
+}
+
+type DateSource = 'printed' | 'clave' | 'none';
+
+function purchaseToDraftItems(purchase: Purchase): EditableDraftItem[] {
+  return purchase.items.map((it) => ({
+    id: it.id,
+    rawReceiptName: it.rawReceiptName,
+    normalizedName: it.normalizedName,
+    canonicalName: it.canonicalName,
+    category: it.category,
+    quantity: it.quantity,
+    unit: it.unit,
+    unitPrice: it.unitPrice,
+    // Saved lines keep only the net amount, so any promo is already inside it
+    grossPrice: it.totalPrice,
+    discount: 0,
+    totalPrice: it.totalPrice,
+    isShared: it.isShared,
+  }));
+}
+
+/** Receipt-level discount = all discounts minus the per-item promos folded into the line totals. */
+function receiptLevelDiscount(purchase: Purchase): number {
+  const lineTotals = purchase.items.reduce((s, it) => s + it.totalPrice, 0);
+  const itemPromos = Math.max(0, purchase.subtotal - lineTotals);
+  return Math.max(0, Math.round(purchase.discounts - itemPromos));
+}
+
+function purchaseHasTaxIncluded(purchase: Purchase): boolean {
+  return (
+    purchase.taxes === 0 ||
+    Boolean(purchase.notes?.includes('IVA incluido')) ||
+    Math.abs(purchase.subtotal - purchase.discounts - purchase.totalAmount) <= 2
+  );
+}
+
+export const ReceiptScannerModal: React.FC<ReceiptScannerModalProps> = ({
+  isOpen,
+  onClose,
+  members,
+  currentMemberId,
+  categories,
+  supermarkets,
+  currency,
+  language,
+  purchaseHistory = [],
+  onCreateSupermarket,
+  onSavePurchase,
+  editingPurchase = null,
+  onUpdatePurchase,
+}) => {
+  const isEditing = Boolean(editingPurchase);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const cameraInputRef = useRef<HTMLInputElement | null>(null);
+
+  const [step, setStep] = useState<'upload' | 'scanning' | 'blurry_error' | 'confirm'>(
+    editingPurchase ? 'confirm' : 'upload'
+  );
+  const [scanStageText, setScanStageText] = useState('Leyendo tu factura…');
+  const [blurryAdvice, setBlurryAdvice] = useState('');
+  const [isDragging, setIsDragging] = useState(false);
+
+  // Confirmation card editable fields
+  const [supermarket, setSupermarket] = useState(
+    editingPurchase?.supermarket ?? supermarkets[0]?.name ?? ''
+  );
+  const [purchaseDate, setPurchaseDate] = useState(editingPurchase?.purchaseDate ?? getTodayIso());
+  const [dateSource, setDateSource] = useState<DateSource>('printed');
+  const [paidByMemberId, setPaidByMemberId] = useState(editingPurchase?.createdBy ?? currentMemberId);
+  const [discounts, setDiscounts] = useState(editingPurchase ? receiptLevelDiscount(editingPurchase) : 0);
+  const [taxes, setTaxes] = useState(editingPurchase?.taxes ?? 0);
+  const [receiptGrandTotal, setReceiptGrandTotal] = useState(editingPurchase?.totalAmount ?? 0);
+  const [taxesIncluded, setTaxesIncluded] = useState(
+    editingPurchase ? purchaseHasTaxIncluded(editingPurchase) : true
+  );
+  const [scanWarnings, setScanWarnings] = useState<string[]>([]);
+  const [wasRepaired, setWasRepaired] = useState(false);
+  const [receiptImageUrl, setReceiptImageUrl] = useState(editingPurchase?.receiptImageUrl ?? '');
+  const [failedImageUrl, setFailedImageUrl] = useState('');
+  const [draftItems, setDraftItems] = useState<EditableDraftItem[]>(
+    editingPurchase ? purchaseToDraftItems(editingPurchase) : []
+  );
+
+  // Inline custom supermarket creator
+  const [showNewStoreForm, setShowNewStoreForm] = useState(false);
+  const [newStoreName, setNewStoreName] = useState('');
+  const [newStoreType, setNewStoreType] = useState<SupermarketType>('Abastecedor / Pulpería');
+  const [newStoreLocation, setNewStoreLocation] = useState('');
+
+  if (!isOpen) return null;
+
+  const runSimulatedScanSequence = async (callback: () => Promise<void> | void) => {
+    setStep('scanning');
+    setScanStageText('Leyendo tu factura…');
+    await callback();
+  };
+
+  const handleFileUpload = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      runSimulatedScanSequence(async () => {
+        const result = await scanReceiptImageWithAI(dataUrl, language);
+        if (result.isBlurry) {
+          setBlurryAdvice(
+            result.blurryAdvice ||
+              'El texto del recibo se ve desenfocado. Mantén el teléfono firme y evita sombras.'
+          );
+          setFailedImageUrl(dataUrl);
+          setStep('blurry_error');
+          return;
+        }
+        // "PALI SARCHI" on the receipt -> the household's "Palí" store
+        const fold = (v: string) =>
+          v.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+        const scannedStore = fold(result.supermarket || '');
+        const knownStore = scannedStore
+          ? supermarkets.find((st) => {
+              const name = fold(st.name);
+              return name === scannedStore || scannedStore.startsWith(`${name} `) || name.startsWith(`${scannedStore} `);
+            })
+          : undefined;
+        setSupermarket(knownStore?.name || result.supermarket || supermarkets[0]?.name || '');
+        // No printed date and no electronic key: default to today and ask the user to confirm
+        const source: DateSource = result.purchaseDate ? result.dateSource ?? 'printed' : 'none';
+        setDateSource(source);
+        setPurchaseDate(source === 'none' ? getTodayIso() : result.purchaseDate);
+        setDiscounts(result.discounts || 0);
+        setTaxes(result.taxes || 0);
+        setTaxesIncluded(result.pricesIncludeTax ?? true);
+        setReceiptGrandTotal(result.receiptTotal || 0);
+        setScanWarnings(result.validation?.warnings ?? []);
+        setWasRepaired(Boolean(result.validation?.repaired));
+        setReceiptImageUrl(dataUrl);
+        const memory = buildReceiptMemory(purchaseHistory);
+        setDraftItems(
+          result.items.map((it, idx) =>
+            applyReceiptMemory(
+              {
+                id: `draft-up-${Date.now()}-${idx}`,
+                rawReceiptName: it.rawReceiptName,
+                normalizedName: it.normalizedName,
+                canonicalName: it.canonicalName,
+                category: it.category,
+                quantity: it.quantity,
+                unit: it.unit,
+                unitPrice: it.unitPrice,
+                grossPrice: it.grossPrice ?? it.totalPrice,
+                discount: it.discount ?? 0,
+                discountLabel: it.discountLabel,
+                totalPrice: it.totalPrice,
+                barcode: it.barcode,
+                pricingMode: it.pricingMode,
+                sizeKnown: it.sizeKnown,
+                needsReview: it.needsReview,
+                reviewReasons: it.reviewReasons,
+                isShared: it.isShared,
+              },
+              memory
+            )
+          ).map((d) =>
+            d.learnedFromHistory && d.sizeKnown
+              ? {
+                  ...d,
+                  reviewReasons: d.reviewReasons?.filter((r) => !r.startsWith('La factura no indica')),
+                }
+              : d
+          )
+        );
+        setStep('confirm');
+      });
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const itemsSubtotal = Math.round(
+    draftItems.reduce((sum, item) => sum + (Number(item.totalPrice) || 0), 0)
+  );
+  const itemPromos = Math.round(
+    draftItems.reduce((sum, item) => sum + (Number(item.discount) || 0), 0)
+  );
+  const computedGrandTotal = Math.round(itemsSubtotal - discounts + (taxesIncluded ? 0 : taxes));
+  const reviewCount = draftItems.filter((i) => i.needsReview).length;
+  const totalDifference = Math.round(computedGrandTotal - receiptGrandTotal);
+  const hasMathDiscrepancy = Math.abs(totalDifference) > 1;
+
+  const handleUpdateDraftItem = (
+    id: string,
+    field: keyof EditableDraftItem,
+    value: string | number | boolean
+  ) => {
+    setDraftItems((prev) =>
+      prev.map((item) => {
+        if (item.id !== id) return item;
+        const updated = { ...item, [field]: value };
+        if (field === 'quantity' || field === 'unitPrice') {
+          const q = field === 'quantity' ? Number(value) : item.quantity;
+          const up = field === 'unitPrice' ? Number(value) : item.unitPrice;
+          updated.grossPrice = Math.round(q * up);
+          updated.totalPrice = Math.max(0, updated.grossPrice - (Number(item.discount) || 0));
+        }
+        if (field === 'discount') {
+          updated.totalPrice = Math.max(0, item.grossPrice - (Number(value) || 0));
+        }
+        if (field === 'totalPrice') {
+          updated.grossPrice = (Number(value) || 0) + (Number(item.discount) || 0);
+        }
+        if (field !== 'isShared') updated.needsReview = false;
+        if (field === 'normalizedName' && typeof value === 'string') {
+          const norm = normalizeReceiptProduct(value);
+          updated.canonicalName = norm.canonicalName;
+        }
+        return updated;
+      })
+    );
+  };
+
+  const handleAddManualDraftItem = () => {
+    setDraftItems((prev) => [
+      ...prev,
+      {
+        id: `draft-manual-${Date.now()}`,
+        rawReceiptName: 'MANUAL',
+        normalizedName: '',
+        canonicalName: '',
+        category: 'Pantry Staples',
+        quantity: 1,
+        unit: 'unid',
+        unitPrice: 0,
+        grossPrice: 0,
+        discount: 0,
+        totalPrice: 0,
+        isShared: true,
+      },
+    ]);
+  };
+
+  // Plan B when the AI is down: keep the photo and type the items by hand
+  const handleEnterManually = () => {
+    setPurchaseDate(getTodayIso());
+    setDateSource('none');
+    setDiscounts(0);
+    setTaxes(0);
+    setTaxesIncluded(true);
+    setReceiptGrandTotal(0);
+    setScanWarnings([]);
+    setWasRepaired(false);
+    setReceiptImageUrl(failedImageUrl);
+    setDraftItems([]);
+    setStep('confirm');
+  };
+
+  const handleCreateCustomStoreInline = () => {
+    const trimmed = newStoreName.trim();
+    if (!trimmed) return;
+    onCreateSupermarket({
+      name: trimmed,
+      type: newStoreType,
+      color: '#0284c7',
+      locationHint: newStoreLocation.trim() || 'Comercio Local',
+      isCustom: true,
+    });
+    setSupermarket(trimmed);
+    setNewStoreName('');
+    setNewStoreLocation('');
+    setShowNewStoreForm(false);
+  };
+
+  const handleConfirmAndSave = () => {
+    // Also register supermarket if user typed one not in list
+    if (
+      supermarket.trim() &&
+      !supermarkets.some((s) => s.name.toLowerCase() === supermarket.trim().toLowerCase())
+    ) {
+      onCreateSupermarket({
+        name: supermarket.trim(),
+        type: 'Abastecedor / Pulpería',
+        color: '#0284c7',
+        isCustom: true,
+      });
+    }
+
+    const purchaseId = editingPurchase?.id ?? `pur-${Date.now()}`;
+    const finalItems: PurchaseItem[] = draftItems.map((d, idx) => {
+      const baseConv = normalizeToBaseUnit(d.quantity, d.unit, d.normalizedName);
+      return {
+        id: `pi-${Date.now()}-${idx}`,
+        purchaseId,
+        rawReceiptName: d.rawReceiptName,
+        normalizedName: d.normalizedName,
+        canonicalName: d.canonicalName || normalizeReceiptProduct(d.normalizedName).canonicalName,
+        category: d.category,
+        quantity: Number(d.quantity),
+        unit: d.unit,
+        baseUnitQuantity: baseConv.baseUnitQuantity,
+        baseUnit: baseConv.baseUnit,
+        unitPrice: Number(d.unitPrice),
+        totalPrice: Number(d.totalPrice),
+        isShared: d.isShared,
+        createdBy: paidByMemberId,
+        purchaseDate,
+        supermarket,
+      };
+    });
+
+    // Purchase keeps the classic breakdown: gross subtotal - all discounts (+ IVA only when not included)
+    const grossSubtotal = itemsSubtotal + itemPromos;
+    const allDiscounts = itemPromos + Number(discounts);
+    const newPurchase: Purchase = {
+      id: purchaseId,
+      householdId: editingPurchase?.householdId ?? '',
+      supermarket,
+      purchaseDate,
+      createdBy: paidByMemberId,
+      subtotal: grossSubtotal,
+      discounts: allDiscounts,
+      taxes: Number(taxes),
+      totalAmount: Number(receiptGrandTotal),
+      notes: taxesIncluded && Number(taxes) > 0 ? 'IVA incluido en los precios' : undefined,
+      receiptImageUrl,
+      items: finalItems,
+    };
+
+    if (editingPurchase && onUpdatePurchase) {
+      onUpdatePurchase(newPurchase);
+    } else {
+      onSavePurchase(newPurchase);
+    }
+    setStep('upload');
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4 bg-slate-900/50 backdrop-blur-md animate-spring-in overflow-hidden">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={isEditing ? 'Editar factura' : 'Escáner de facturas'}
+        className="liquid-glass-elevated w-full max-w-6xl rounded-t-3xl sm:rounded-2xl overflow-hidden h-[calc(100dvh-env(safe-area-inset-top)-8px)] sm:h-auto sm:max-h-[90vh] flex flex-col"
+      >
+        {/* Top Modal Header */}
+        <div className="flex items-center justify-between gap-3 px-4 sm:px-5 py-3 border-b border-[var(--glass-border)] shrink-0">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-xl liquid-lens-btn flex items-center justify-center text-white shrink-0">
+              <Camera className="w-5 h-5" />
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-base font-bold tracking-tight flex items-center gap-2 truncate">
+                {isEditing
+                  ? language === 'es' ? 'Editar factura' : 'Edit receipt'
+                  : language === 'es' ? 'Escanear factura' : 'Scan receipt'}
+              </h2>
+              <p className="hidden sm:block text-xs text-[var(--text-muted)]">
+                {isEditing
+                  ? 'Corrige comercio, fecha, productos o montos y guarda los cambios'
+                  : `Lectura automática de productos y total en ${currency}`}
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => {
+              setStep('upload');
+              onClose();
+            }}
+            className="w-10 h-10 shrink-0 flex items-center justify-center rounded-xl liquid-glass liquid-glass-interactive"
+            aria-label="Cerrar escáner"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Modal Body */}
+        <div className="p-4 sm:p-6 overflow-y-auto overscroll-contain flex-1 space-y-6 pb-[calc(env(safe-area-inset-bottom)+16px)]">
+          {step === 'upload' && (
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              {/* Drag and Drop / Mobile Camera Zone */}
+              <div className="lg:col-span-12 flex flex-col justify-between">
+                <div
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setIsDragging(true);
+                  }}
+                  onDragLeave={() => setIsDragging(false)}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setIsDragging(false);
+                    const file = e.dataTransfer.files?.[0];
+                    if (file) handleFileUpload(file);
+                  }}
+                  className={`liquid-glass-subtle rounded-2xl p-8 text-center border-2 border-dashed transition-all flex flex-col items-center justify-center min-h-[300px] ${
+                    isDragging
+                      ? 'border-avocado-500 bg-avocado-500/10'
+                      : 'border-[var(--glass-border-strong)] hover:border-avocado-500/60'
+                  }`}
+                >
+                  <div className="w-14 h-14 rounded-2xl liquid-lens-btn flex items-center justify-center text-white mb-4">
+                    <Upload className="w-7 h-7" />
+                  </div>
+                  <h3 className="text-base font-bold mb-1">
+                    Arrastra y suelta la foto de tu factura, o tómala con la cámara
+                  </h3>
+                  <p className="text-xs text-[var(--text-muted)] max-w-md mb-6 leading-relaxed">
+                    Lectura automática de tiquetes de cualquier supermercado o pulpería: traduce códigos abreviados como{' '}
+                    <code className="px-1.5 py-0.5 rounded bg-avocado-500/10 font-mono text-avocado-600 dark:text-avocado-400">
+                      LCH DOS PIN 1L
+                    </code>{' '}
+                    en{' '}
+                    <span className="font-semibold text-emerald-600 dark:text-emerald-400">
+                      Leche Dos Pinos 1L
+                    </span>
+                    .
+                  </p>
+
+                  <div className="flex flex-wrap items-center justify-center gap-3">
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (f) handleFileUpload(f);
+                      }}
+                    />
+                    <input
+                      ref={cameraInputRef}
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      className="hidden"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (f) handleFileUpload(f);
+                      }}
+                    />
+                    <button
+                      onClick={() => cameraInputRef.current?.click()}
+                      className="liquid-lens-btn px-5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2"
+                    >
+                      <Camera className="w-4 h-4" />
+                      Tomar Foto con Cámara
+                    </button>
+                    <button
+                      onClick={() => fileInputRef.current?.click()}
+                      className="liquid-glass liquid-glass-interactive px-5 py-2.5 rounded-xl text-xs font-semibold flex items-center gap-2"
+                    >
+                      <Upload className="w-4 h-4 text-avocado-600 dark:text-avocado-400" />
+                      Subir Imagen
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+          )}
+
+          {/* Glass Shimmer Skeleton State while AI processes */}
+          {step === 'scanning' && (
+            <div className="py-10 px-4 flex flex-col items-center justify-center space-y-6">
+              <div className="w-14 h-14 rounded-2xl liquid-lens-btn flex items-center justify-center text-white">
+                <Sparkles className="w-7 h-7 animate-spin" />
+              </div>
+              <div className="text-center space-y-1">
+                <h3 className="text-base font-bold">{scanStageText}</h3>
+                <p className="text-xs text-[var(--text-muted)]">
+                  Esto puede tardar unos segundos.
+                </p>
+              </div>
+              <div className="w-full max-w-3xl grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="h-44 rounded-xl liquid-skeleton" />
+                <div className="md:col-span-2 space-y-3">
+                  <div className="h-10 rounded-xl liquid-skeleton" />
+                  <div className="h-11 rounded-xl liquid-skeleton" />
+                  <div className="h-11 rounded-xl liquid-skeleton" />
+                  <div className="h-11 rounded-xl liquid-skeleton" />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Friendly Blurry / Unreadable Receipt Recovery UI */}
+          {step === 'blurry_error' && (
+            <div className="max-w-xl mx-auto liquid-glass rounded-2xl p-6 border border-rose-500/40 text-center space-y-4">
+              <div className="w-12 h-12 rounded-xl bg-rose-500/15 flex items-center justify-center mx-auto text-rose-600 dark:text-rose-400">
+                <FileWarning className="w-6 h-6" />
+              </div>
+              <h3 className="text-base font-bold">No Pudimos Leer Esta Factura con Claridad</h3>
+              <p className="text-xs text-[var(--text-secondary)] leading-relaxed">{blurryAdvice}</p>
+              <div className="liquid-glass-subtle rounded-xl p-4 text-left text-xs space-y-1.5">
+                <p className="font-bold text-avocado-600 dark:text-avocado-400">
+                  Consejos para una Foto Nítida:
+                </p>
+                <ul className="list-disc list-inside text-[var(--text-secondary)] space-y-1">
+                  <li>Alisa las arrugas del papel térmico sobre una mesa plana.</li>
+                  <li>Usa buena luz sin sombras sobre la columna de precios.</li>
+                  <li>Asegúrate de que se vean tanto los nombres a la izquierda como los montos a la derecha.</li>
+                </ul>
+              </div>
+              <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+                <button
+                  onClick={() => setStep('upload')}
+                  className="liquid-lens-btn px-5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                  Volver a Intentar / Elegir Otra Foto
+                </button>
+                {failedImageUrl && (
+                  <button
+                    onClick={handleEnterManually}
+                    className="liquid-glass-subtle liquid-glass-interactive px-5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2"
+                  >
+                    <Plus className="w-4 h-4" />
+                    Registrar a Mano con Esta Foto
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Glass Confirmation Card (Side-by-Side Receipt Image + Editable Items) */}
+          {step === 'confirm' && (
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              {/* Left Side: Original Receipt Image Preview */}
+              <div className="lg:col-span-4 flex flex-col gap-3">
+                <div className="liquid-glass rounded-xl p-3 flex flex-col items-center">
+                  <div className="w-full flex items-center justify-between text-xs font-semibold px-2 pb-2 text-[var(--text-secondary)]">
+                    <span>Imagen Original de Factura</span>
+                    <span className="text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                      <CheckCircle2 className="w-3.5 h-3.5" /> Lista para Guardar
+                    </span>
+                  </div>
+                  <div className="w-full max-h-[410px] overflow-y-auto rounded-lg bg-slate-100 dark:bg-slate-900/60 p-2 flex justify-center">
+                    {receiptImageUrl ? (
+                      <img
+                        src={receiptImageUrl}
+                        alt="Factura escaneada"
+                        className="max-w-full h-auto rounded-lg shadow-sm"
+                      />
+                    ) : (
+                      <p className="py-10 text-xs text-[var(--text-muted)]">Sin imagen de la factura</p>
+                    )}
+                  </div>
+                </div>
+
+                {/* Sum Validation Status Card */}
+                {hasMathDiscrepancy ? (
+                  <div className="liquid-glass rounded-xl p-4 border border-amber-500/50 bg-amber-500/10 space-y-2.5">
+                    <div className="flex items-start gap-2.5">
+                      <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                      <div>
+                        <h4 className="text-xs font-bold text-amber-700 dark:text-amber-300 uppercase">
+                          Diferencia Detectada en Suma ({totalDifference > 0 ? '+' : ''}
+                          {formatCurrency(totalDifference, currency)})
+                        </h4>
+                        <p className="text-xs text-[var(--text-secondary)] mt-1 leading-relaxed">
+                          La suma calculada ({formatCurrency(itemsSubtotal, currency)} −{' '}
+                          {formatCurrency(discounts, currency)} desc.
+                          {taxesIncluded ? ', IVA incluido' : <> + {formatCurrency(taxes, currency)} IVA</>} ={' '}
+                          <strong>{formatCurrency(computedGrandTotal, currency)}</strong>) no
+                          coincide con el Total General de la factura (
+                          <strong>{formatCurrency(receiptGrandTotal, currency)}</strong>). Revisa
+                          los ítems o ajusta el total.
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setReceiptGrandTotal(computedGrandTotal)}
+                      className="w-full py-2 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-800 dark:text-amber-200 text-xs font-bold transition"
+                    >
+                      Ajustar Total General a {formatCurrency(computedGrandTotal, currency)}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="liquid-glass rounded-xl p-3.5 border border-emerald-500/40 bg-emerald-500/10 flex items-center gap-2.5">
+                    <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                    <div className="text-xs">
+                      <p className="font-bold text-emerald-700 dark:text-emerald-300">
+                        Suma de Ítems Validada Exactamente
+                      </p>
+                      <p className="text-[var(--text-secondary)]">
+                        Productos ({formatCurrency(itemsSubtotal, currency)})
+                        {discounts > 0 && <> − Desc. ({formatCurrency(discounts, currency)})</>}
+                        {taxesIncluded ? ' (IVA incluido)' : <> + IVA ({formatCurrency(taxes, currency)})</>} ={' '}
+                        <strong>{formatCurrency(receiptGrandTotal, currency)}</strong>
+                      </p>
+                      {itemPromos > 0 && (
+                        <p className="text-[var(--text-secondary)]">
+                          Ya incluye {formatCurrency(itemPromos, currency)} de promociones aplicadas a cada producto.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {(scanWarnings.length > 0 || reviewCount > 0 || wasRepaired) && (
+                  <div className="liquid-glass rounded-xl p-3.5 border border-amber-500/30 space-y-1.5 text-xs">
+                    {wasRepaired && (
+                      <p className="flex items-start gap-1.5 text-[var(--text-secondary)]">
+                        <RefreshCw className="w-3.5 h-3.5 shrink-0 mt-0.5 text-avocado-600 dark:text-avocado-400" />
+                        La primera lectura no cuadraba con el total; se hizo una segunda lectura automática.
+                      </p>
+                    )}
+                    {scanWarnings
+                      .filter((w) => !w.startsWith('La suma'))
+                      .map((w) => (
+                        <p key={w} className="flex items-start gap-1.5 text-amber-700 dark:text-amber-300">
+                          <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" /> {w}
+                        </p>
+                      ))}
+                    {reviewCount > 0 && (
+                      <p className="flex items-start gap-1.5 text-amber-700 dark:text-amber-300">
+                        <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                        {reviewCount === 1
+                          ? '1 producto marcado para revisar.'
+                          : `${reviewCount} productos marcados para revisar.`}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Right Side: Editable Metadata & Line Items */}
+              <div className="lg:col-span-8 flex flex-col gap-4">
+                {/* Store, Date & Buyer Metadata */}
+                <div className="liquid-glass rounded-xl p-4 space-y-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                    <div className="sm:col-span-2">
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-[11px] font-semibold uppercase text-[var(--text-muted)]">
+                          Supermercado / Comercio
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => setShowNewStoreForm((s) => !s)}
+                          className="text-[11px] font-bold text-avocado-600 dark:text-avocado-400 hover:underline flex items-center gap-0.5"
+                        >
+                          <Plus className="w-3 h-3" /> Nuevo Comercio
+                        </button>
+                      </div>
+                      <select
+                        value={supermarket}
+                        onChange={(e) => setSupermarket(e.target.value)}
+                        className="liquid-input w-full px-3 py-2 rounded-lg text-xs font-semibold"
+                      >
+                        {supermarkets.map((st) => (
+                          <option key={st.id} value={st.name}>
+                            {st.name} ({st.type})
+                          </option>
+                        ))}
+                        {!supermarkets.some((s) => s.name === supermarket) && (
+                          <option value={supermarket}>{supermarket}</option>
+                        )}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[11px] font-semibold uppercase text-[var(--text-muted)] block mb-1">
+                        Fecha de Compra
+                      </label>
+                      <input
+                        type="date"
+                        value={purchaseDate}
+                        max={getTodayIso()}
+                        onChange={(e) => {
+                          setPurchaseDate(e.target.value);
+                          setDateSource('printed');
+                        }}
+                        className={`liquid-input w-full px-3 py-2 rounded-lg text-xs font-semibold ${
+                          dateSource === 'none' ? 'ring-2 ring-amber-500/70 bg-amber-500/10' : ''
+                        }`}
+                      />
+                      {dateSource === 'none' && (
+                        <p className="mt-1 text-[11px] font-semibold text-amber-700 dark:text-amber-300">
+                          La factura no trae fecha: confírmala
+                        </p>
+                      )}
+                      {dateSource === 'clave' && (
+                        <p className="mt-1 text-[11px] text-[var(--text-muted)]">
+                          Fecha tomada de la clave electrónica
+                        </p>
+                      )}
+                    </div>
+                    <div>
+                      <label className="text-[11px] font-semibold uppercase text-[var(--text-muted)] block mb-1">
+                        Pagado Por
+                      </label>
+                      <select
+                        value={paidByMemberId}
+                        onChange={(e) => setPaidByMemberId(e.target.value)}
+                        className="liquid-input w-full px-3 py-2 rounded-lg text-xs font-semibold"
+                      >
+                        {members.map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {m.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Inline Custom Supermarket Creator */}
+                  {showNewStoreForm && (
+                    <div className="liquid-glass-subtle rounded-xl p-3 border border-avocado-500/30 space-y-2 animate-spring-in">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-avocado-600 dark:text-avocado-400 flex items-center gap-1.5">
+                          <Store className="w-3.5 h-3.5" /> Registrar Nuevo Supermercado o Pulpería Local
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setShowNewStoreForm(false)}
+                          className="text-xs text-[var(--text-muted)]"
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                        <input
+                          type="text"
+                          value={newStoreName}
+                          onChange={(e) => setNewStoreName(e.target.value)}
+                          placeholder="Ej. Abastecedor La Amistad"
+                          className="liquid-input px-3 py-1.5 rounded-lg text-xs"
+                        />
+                        <select
+                          value={newStoreType}
+                          onChange={(e) => setNewStoreType(e.target.value as SupermarketType)}
+                          className="liquid-input px-2.5 py-1.5 rounded-lg text-xs"
+                        >
+                          <option value="Abastecedor / Pulpería">Abastecedor / Pulpería</option>
+                          <option value="Feria del Agricultor">Feria del Agricultor</option>
+                          <option value="Carnicería / Especialidad">Carnicería / Especialidad</option>
+                          <option value="Cadena Nacional">Cadena Nacional</option>
+                          <option value="Club Mayorista">Club Mayorista</option>
+                          <option value="Otro">Otro Comercio</option>
+                        </select>
+                        <div className="flex gap-1.5">
+                          <input
+                            type="text"
+                            value={newStoreLocation}
+                            onChange={(e) => setNewStoreLocation(e.target.value)}
+                            placeholder="Zona / Barrio (Opcional)"
+                            className="liquid-input flex-1 px-2.5 py-1.5 rounded-lg text-xs"
+                          />
+                          <button
+                            type="button"
+                            onClick={handleCreateCustomStoreInline}
+                            className="liquid-lens-btn px-3 py-1.5 rounded-lg text-xs font-bold shrink-0"
+                          >
+                            Guardar
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Extracted Items Table */}
+                <div className="liquid-glass rounded-xl p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="text-sm font-bold">
+                        Ítems Extraídos y Normalizados ({draftItems.length})
+                      </h4>
+                      <p className="text-[11px] text-[var(--text-muted)]">
+                        Puedes editar nombres, categorías, cantidades o precios antes de guardar.
+                      </p>
+                    </div>
+                    <button
+                      onClick={handleAddManualDraftItem}
+                      className="liquid-glass liquid-glass-interactive px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 text-avocado-600 dark:text-avocado-400"
+                    >
+                      <Plus className="w-3.5 h-3.5" /> Añadir Ítem Manual
+                    </button>
+                  </div>
+
+                  <div className="space-y-2 max-h-[290px] overflow-y-auto pr-1">
+                    {draftItems.map((item) => (
+                      <div
+                        key={item.id}
+                        className={`liquid-glass-subtle rounded-xl p-3 flex flex-col gap-2 ${
+                          item.needsReview ? 'ring-1 ring-amber-500/60' : ''
+                        }`}
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                          <div className="flex flex-wrap items-center gap-2 min-w-0">
+                            <span className="px-2 py-0.5 rounded bg-slate-500/10 font-mono text-[var(--text-secondary)]">
+                              Tiquete: {item.rawReceiptName}
+                              {item.barcode && (
+                                <span className="opacity-60"> · {item.barcode}</span>
+                              )}
+                            </span>
+                            <span className="text-avocado-600 dark:text-avocado-400 font-semibold flex items-center gap-1">
+                              → Producto: <Tag className="w-3 h-3" /> {item.canonicalName}
+                            </span>
+                            {item.pricingMode === 'weight' && (
+                              <span className="px-1.5 py-0.5 rounded-full bg-sky-500/15 text-sky-700 dark:text-sky-300 font-bold text-[10px]">
+                                Por peso
+                              </span>
+                            )}
+                            {item.learnedFromHistory && (
+                              <span
+                                className="px-1.5 py-0.5 rounded-full bg-avocado-500/15 text-avocado-700 dark:text-avocado-300 font-bold text-[10px]"
+                                title="Nombre y presentación tomados de una compra anterior con la misma línea de factura"
+                              >
+                                Reconocido
+                              </span>
+                            )}
+                            {item.needsReview && (
+                              <span
+                                className="px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-300 font-bold text-[10px] flex items-center gap-1"
+                                title={item.reviewReasons?.join(' ')}
+                              >
+                                <AlertTriangle className="w-3 h-3" /> Revisar
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleUpdateDraftItem(item.id, 'isShared', !item.isShared)
+                              }
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1 transition ${
+                                item.isShared
+                                  ? 'bg-avocado-500/15 text-avocado-600 dark:text-avocado-400'
+                                  : 'bg-purple-500/15 text-purple-600 dark:text-purple-400'
+                              }`}
+                            >
+                              {item.isShared ? (
+                                <>
+                                  <Users className="w-3 h-3" /> Compartido
+                                </>
+                              ) : (
+                                <>
+                                  <User className="w-3 h-3" /> Personal
+                                </>
+                              )}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setDraftItems((prev) => prev.filter((i) => i.id !== item.id))
+                              }
+                              className="p-1 rounded-lg hover:bg-rose-500/15 text-rose-500 transition"
+                              title="Eliminar ítem"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-12 gap-2 items-center">
+                          <div className="col-span-12 sm:col-span-4">
+                            <input
+                              type="text"
+                              value={item.normalizedName}
+                              onChange={(e) =>
+                                handleUpdateDraftItem(item.id, 'normalizedName', e.target.value)
+                              }
+                              className="liquid-input w-full px-2.5 py-1.5 rounded-lg text-xs font-semibold"
+                            />
+                          </div>
+                          <div className="col-span-5 sm:col-span-3">
+                            <select
+                              value={item.category}
+                              onChange={(e) =>
+                                handleUpdateDraftItem(
+                                  item.id,
+                                  'category',
+                                  e.target.value as GroceryCategory
+                                )
+                              }
+                              className="liquid-input w-full px-2 py-1.5 rounded-lg text-xs"
+                            >
+                              {categories.map((cat) => (
+                                <option key={cat} value={cat}>
+                                  {translateCategory(cat, language)}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="col-span-3 sm:col-span-2 flex gap-1">
+                            <input
+                              type="number"
+                              step="any"
+                              value={item.quantity}
+                              onChange={(e) =>
+                                handleUpdateDraftItem(
+                                  item.id,
+                                  'quantity',
+                                  parseFloat(e.target.value) || 0
+                                )
+                              }
+                              className="liquid-input w-1/2 px-2 py-1.5 rounded-lg text-xs text-center"
+                            />
+                            <input
+                              type="text"
+                              value={item.unit}
+                              onChange={(e) =>
+                                handleUpdateDraftItem(item.id, 'unit', e.target.value)
+                              }
+                              className="liquid-input w-1/2 px-1.5 py-1.5 rounded-lg text-xs text-center"
+                            />
+                          </div>
+                          <div className="col-span-2 sm:col-span-1">
+                            <input
+                              type="number"
+                              step="10"
+                              value={item.unitPrice}
+                              onChange={(e) =>
+                                handleUpdateDraftItem(
+                                  item.id,
+                                  'unitPrice',
+                                  parseFloat(e.target.value) || 0
+                                )
+                              }
+                              className="liquid-input w-full px-1.5 py-1.5 rounded-lg text-xs text-right"
+                              title="Precio unitario (₡)"
+                            />
+                          </div>
+                          <div className="col-span-2 sm:col-span-2">
+                            <input
+                              type="number"
+                              step="10"
+                              value={item.totalPrice}
+                              onChange={(e) =>
+                                handleUpdateDraftItem(
+                                  item.id,
+                                  'totalPrice',
+                                  parseFloat(e.target.value) || 0
+                                )
+                              }
+                              className="liquid-input w-full px-2 py-1.5 rounded-lg text-xs font-bold text-right text-emerald-600 dark:text-emerald-400"
+                              title="Pagado por la línea, ya con la promoción (₡)"
+                            />
+                          </div>
+                        </div>
+
+                        {(item.discount > 0 || (item.reviewReasons?.length ?? 0) > 0) && (
+                          <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                            <span className="text-[var(--text-muted)]">
+                              {item.reviewReasons?.join(' ')}
+                            </span>
+                            {item.discount > 0 && (
+                              <label className="flex items-center gap-1.5 text-emerald-700 dark:text-emerald-300 font-semibold">
+                                {item.discountLabel || 'Promoción'}: −₡
+                                <input
+                                  type="number"
+                                  step="10"
+                                  value={item.discount}
+                                  onChange={(e) =>
+                                    handleUpdateDraftItem(
+                                      item.id,
+                                      'discount',
+                                      parseFloat(e.target.value) || 0
+                                    )
+                                  }
+                                  className="liquid-input w-20 px-1.5 py-1 rounded-lg text-xs text-right"
+                                />
+                                <span className="text-[var(--text-muted)] font-normal">
+                                  (antes {formatCurrency(item.grossPrice, currency)})
+                                </span>
+                              </label>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Subtotal, Discounts, Taxes & Grand Total Row */}
+                  <div className="pt-3 border-t border-[var(--glass-border)] grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className="liquid-glass-subtle rounded-lg p-2.5">
+                      <span className="text-[10px] uppercase text-[var(--text-muted)] block">
+                        Productos (con promos)
+                      </span>
+                      <span className="text-sm font-bold">
+                        {formatCurrency(itemsSubtotal, currency)}
+                      </span>
+                    </div>
+                    <div className="liquid-glass-subtle rounded-lg p-2.5">
+                      <span className="text-[10px] uppercase text-[var(--text-muted)] block">
+                        Otros descuentos (−₡)
+                      </span>
+                      <input
+                        type="number"
+                        step="50"
+                        value={discounts}
+                        onChange={(e) => setDiscounts(parseFloat(e.target.value) || 0)}
+                        className="bg-transparent font-bold text-sm text-emerald-600 dark:text-emerald-400 w-full focus:outline-none"
+                      />
+                    </div>
+                    <div className="liquid-glass-subtle rounded-lg p-2.5">
+                      <span className="text-[10px] uppercase text-[var(--text-muted)] block">
+                        <span className="flex items-center justify-between gap-1">
+                          IVA {taxesIncluded ? '(incluido)' : '(+₡)'}
+                          <label className="flex items-center gap-1 normal-case cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={taxesIncluded}
+                              onChange={(e) => setTaxesIncluded(e.target.checked)}
+                              className="accent-current"
+                            />
+                            incluido
+                          </label>
+                        </span>
+                      </span>
+                      <input
+                        type="number"
+                        step="50"
+                        value={taxes}
+                        onChange={(e) => setTaxes(parseFloat(e.target.value) || 0)}
+                        className="bg-transparent font-bold text-sm w-full focus:outline-none"
+                      />
+                    </div>
+                    <div className="liquid-glass-subtle rounded-lg p-2.5">
+                      <span className="text-[10px] uppercase text-[var(--text-muted)] block">
+                        Total Factura (₡)
+                      </span>
+                      <input
+                        type="number"
+                        step="50"
+                        value={receiptGrandTotal}
+                        onChange={(e) => setReceiptGrandTotal(parseFloat(e.target.value) || 0)}
+                        className={`bg-transparent font-extrabold text-sm w-full focus:outline-none ${
+                          hasMathDiscrepancy
+                            ? 'text-amber-600 dark:text-amber-400'
+                            : 'text-avocado-600 dark:text-avocado-400'
+                        }`}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Action Buttons */}
+                <div className="flex items-center justify-between gap-3 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setStep('upload')}
+                    className="liquid-glass liquid-glass-interactive px-4 py-2.5 rounded-xl text-xs font-semibold"
+                  >
+                    ← Escanear Otra Factura
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleConfirmAndSave}
+                    className="liquid-lens-btn px-6 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2"
+                  >
+                    <CheckCircle2 className="w-4 h-4" />
+                    {isEditing ? 'Guardar Cambios' : 'Confirmar y Guardar Compra'} ({formatCurrency(receiptGrandTotal, currency)})
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};

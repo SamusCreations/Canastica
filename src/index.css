@@ -1,0 +1,280 @@
+@import "tailwindcss";
+
+/* Canastica brand palette: avocado green taken from the logo (400 is the logo's main green) */
+@theme {
+  --color-avocado-50: #f3f8ea;
+  --color-avocado-100: #e4efd0;
+  --color-avocado-200: #cbe0a6;
+  --color-avocado-300: #aecd78;
+  --color-avocado-400: #90b454;
+  --color-avocado-500: #74a03a;
+  --color-avocado-600: #4f7f27;
+  --color-avocado-700: #416a21;
+  --color-avocado-800: #36561d;
+  --color-avocado-900: #2e481b;
+  --color-avocado-950: #17270b;
+  --color-coral-400: #f08a6c;
+  --color-coral-500: #e96f4e;
+}
+
+:root,
+html.light {
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Plus Jakarta Sans", system-ui, sans-serif;
+  --spring-easing: cubic-bezier(0.22, 1.15, 0.36, 1);
+  --smooth-easing: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* Light Mode: clean white with a faint avocado-tinted canvas */
+  --bg-primary: #ffffff;
+  --bg-canvas: #f7f9f3;
+  --bg-sidebar: #ffffff;
+  --text-primary: #172014;
+  --text-secondary: #39452f;
+  --text-muted: #687560;
+
+  --glass-bg: #ffffff;
+  --glass-bg-subtle: #f6f8f1;
+  --glass-bg-hover: #eef3e6;
+  --glass-bg-elevated: rgba(255, 255, 255, 0.96);
+  --glass-border: #e3e9da;
+  --glass-border-strong: #cdd7c1;
+  --glass-specular: inset 0 1px 0 0 rgba(255, 255, 255, 0.9);
+  --glass-shadow: 0 1px 3px 0 rgba(23, 32, 20, 0.03), 0 1px 2px -1px rgba(23, 32, 20, 0.02);
+  --glass-shadow-elevated: 0 18px 38px -10px rgba(23, 32, 20, 0.12),
+    0 4px 10px -2px rgba(23, 32, 20, 0.05);
+  --input-glass-bg: #ffffff;
+  --input-border: #cdd7c1;
+}
+
+html.dark {
+  /* Dark Mode: deep green-black, like an avocado skin */
+  --bg-primary: #0b0f0a;
+  --bg-canvas: #0b0f0a;
+  --bg-sidebar: #10150e;
+  --text-primary: #f4f7f0;
+  --text-secondary: #ced8c5;
+  --text-muted: #99a68f;
+
+  --glass-bg: #141a12;
+  --glass-bg-subtle: #192117;
+  --glass-bg-hover: #222c1e;
+  --glass-bg-elevated: rgba(20, 26, 18, 0.96);
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --glass-border-strong: rgba(255, 255, 255, 0.15);
+  --glass-specular: inset 0 1px 0 0 rgba(255, 255, 255, 0.06);
+  --glass-shadow: 0 2px 8px -2px rgba(0, 0, 0, 0.35);
+  --glass-shadow-elevated: 0 22px 48px -12px rgba(0, 0, 0, 0.65);
+  --input-glass-bg: #10160e;
+  --input-border: rgba(255, 255, 255, 0.14);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  overflow-x: hidden;
+}
+
+body {
+  font-family: var(--font-sans);
+  -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  overscroll-behavior-y: none;
+  background-color: var(--bg-canvas);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background-color 0.2s ease, color 0.15s ease;
+}
+
+/* ============================================================================
+   Minimalist Clean Surfaces with Subtle Liquid Glass Polish
+   ============================================================================ */
+
+@layer components {
+.liquid-glass {
+  position: relative;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-specular), var(--glass-shadow);
+  transition: transform 0.18s var(--smooth-easing),
+    background-color 0.18s ease,
+    box-shadow 0.18s ease,
+    border-color 0.18s ease;
+}
+
+.liquid-glass-subtle {
+  background: var(--glass-bg-subtle);
+  border: 1px solid var(--glass-border);
+  transition: all 0.16s ease;
+}
+
+.liquid-glass-interactive {
+  cursor: pointer;
+}
+
+.liquid-glass-interactive:hover {
+  background: var(--glass-bg-hover);
+  border-color: var(--glass-border-strong);
+}
+
+.liquid-glass-interactive:active {
+  transform: scale(0.992);
+}
+
+.liquid-glass-elevated {
+  position: relative;
+  background: var(--glass-bg-elevated);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border: 1px solid var(--glass-border-strong);
+  box-shadow: var(--glass-specular), var(--glass-shadow-elevated);
+}
+
+.liquid-input {
+  background: var(--input-glass-bg);
+  border: 1px solid var(--input-border);
+  color: var(--text-primary);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.liquid-input:focus {
+  outline: none;
+  border-color: #4f7f27;
+  box-shadow: 0 0 0 2px rgba(79, 127, 39, 0.18);
+}
+
+/* Minimalist Modern Primary CTA Button */
+.liquid-lens-btn {
+  background: #4f7f27;
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: 0 1px 2px rgba(79, 127, 39, 0.25);
+  transition: background-color 0.18s ease, transform 0.18s var(--spring-easing), box-shadow 0.18s ease;
+}
+
+.liquid-lens-btn:hover {
+  background: #416a21;
+  box-shadow: 0 3px 10px -2px rgba(79, 127, 39, 0.35);
+}
+
+.liquid-lens-btn:active {
+  transform: scale(0.98);
+}
+}
+
+/* Smooth Spring Transitions */
+.spring-transition {
+  transition: all 0.25s var(--spring-easing);
+}
+
+@keyframes springPopIn {
+  0% {
+    opacity: 0;
+    transform: scale(0.98) translateY(4px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.animate-spring-in {
+  animation: springPopIn 0.22s var(--smooth-easing) forwards;
+}
+
+/* Shimmer Skeleton for AI Processing */
+@keyframes glassShimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.liquid-skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--glass-bg-subtle) 25%,
+    rgba(144, 180, 84, 0.14) 50%,
+    var(--glass-bg-subtle) 75%
+  );
+  background-size: 200% 100%;
+  animation: glassShimmer 1.5s infinite linear;
+  border: 1px solid var(--glass-border);
+}
+
+/* Utility to hide scrollbars where desired while keeping scroll functionality */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Ultra-subtle slim scrollbars for main containers only when needed */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(144, 160, 128, 0.28);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(144, 160, 128, 0.48);
+}
+
+/* ============================================================================
+   Mobile-first ergonomics
+   ============================================================================ */
+
+/* iOS Safari zooms into any focused field under 16px; keep fields at 16px on phones */
+@media (max-width: 767px) {
+  input:not([type='checkbox']):not([type='radio']):not([type='range']),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
+
+button,
+[role='button'],
+a,
+label,
+select {
+  touch-action: manipulation;
+}
+
+:focus-visible {
+  outline: 2px solid #74a03a;
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
