@@ -173,7 +173,7 @@ export const ShoppingListView: React.FC<ShoppingListViewProps> = ({
           </button>
         </form>
 
-        {aiQuota && (
+        {aiQuota && !aiQuota.exempt && (
           <p className={`text-[11px] ${aiAvailable ? 'text-[var(--text-muted)]' : 'text-amber-700 dark:text-amber-300 font-semibold'}`}>
             {describeAiQuota(aiQuota)}
             {!aiAvailable && ' Mientras tanto, la lista se separa por comas sin IA.'}

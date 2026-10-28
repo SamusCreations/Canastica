@@ -59,6 +59,14 @@ function isDeveloper(user: User): boolean {
     .includes(email);
 }
 
+// No limit when AI_DAILY_LIMIT is missing, "off" or <= 0 (test phase); a positive number sets the daily limit
+function aiUnlimited(): boolean {
+  const raw = (Deno.env.get("AI_DAILY_LIMIT") ?? "").trim().toLowerCase();
+  if (!raw || raw === "off") return true;
+  const n = Number(raw);
+  return !Number.isFinite(n) || n <= 0;
+}
+
 function dailyLimit(): number {
   const n = Number(Deno.env.get("AI_DAILY_LIMIT"));
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 5;
@@ -630,6 +638,7 @@ serve(async (req: Request) => {
   }
 
   const developer = isDeveloper(user);
+  const quotaExempt = developer || aiUnlimited();
   const requestStart = Date.now();
   const timings: Record<string, number> = {};
   const trace = { step: "", attempts: [] as AttemptLog[] };
@@ -673,7 +682,7 @@ serve(async (req: Request) => {
             allowedOriginsFromSecret: configuredOrigins().length > 0,
             requestOrigin: origin || null,
             requestOriginAllowed: origin ? isAllowedOrigin(origin) : null,
-            aiDailyLimit: dailyLimit(),
+            aiDailyLimit: aiUnlimited() ? "sin límite" : dailyLimit(),
             reportEmailConfigured: Boolean(Deno.env.get("RESEND_API_KEY")) && Boolean(reportRecipient()),
             reportFromSecret: Boolean(Deno.env.get("REPORT_FROM")),
             quota: await readQuota(userClient, true).catch((e) => ({ error: String(e) })),
@@ -708,7 +717,9 @@ serve(async (req: Request) => {
     }
 
     if (action === "quota") {
-      quota = await readQuota(userClient, developer);
+      quota = aiUnlimited()
+        ? { used: 0, limit: 0, remaining: 0, exempt: true }
+        : await readQuota(userClient, quotaExempt);
       return json({ quota, ...debugInfo() }, 200, corsHeaders);
     }
 
@@ -737,8 +748,10 @@ serve(async (req: Request) => {
     }
 
     const quotaStart = Date.now();
-    quota = await consumeQuota(userClient, developer);
-    quotaConsumed = true;
+    quota = aiUnlimited()
+      ? { used: 0, limit: 0, remaining: 0, exempt: true }
+      : await consumeQuota(userClient, quotaExempt);
+    quotaConsumed = !aiUnlimited();
     timings.quotaMs = Date.now() - quotaStart;
 
     if (action === "scan-receipt") {

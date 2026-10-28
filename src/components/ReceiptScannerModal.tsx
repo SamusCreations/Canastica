@@ -536,7 +536,7 @@ export const ReceiptScannerModal: React.FC<ReceiptScannerModalProps> = ({
                       Registrar sin Escanear
                     </button>
                   </div>
-                  {aiQuota && (
+                  {aiQuota && !aiQuota.exempt && (
                     <p
                       className={`mt-4 text-[11px] ${
                         aiAvailable ? 'text-[var(--text-muted)]' : 'text-amber-700 dark:text-amber-300 font-semibold'

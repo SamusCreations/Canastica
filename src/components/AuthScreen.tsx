@@ -20,6 +20,36 @@ import { BrandMark } from './BrandLogo';
 
 type AuthMode = 'signin' | 'signup' | 'verify' | 'reset' | 'new_password';
 
+// Test phase: only Google accounts can enter, so access is controlled from Google's test users.
+// Set to true to bring back e-mail/password sign-in, sign-up, verification and password reset.
+const EMAIL_AUTH_ENABLED = false;
+
+/** Official multicolor Google "G". */
+function GoogleLogo({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 48 48" className={className} aria-hidden="true">
+      <path fill="#FFC107" d="M43.611 20.083H42V20H24v8h11.303c-1.649 4.657-6.08 8-11.303 8-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 12.955 4 4 12.955 4 24s8.955 20 20 20 20-8.955 20-20c0-1.341-.138-2.65-.389-3.917z" />
+      <path fill="#FF3D00" d="M6.306 14.691l6.571 4.819C14.655 15.108 18.961 12 24 12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 16.318 4 9.656 8.337 6.306 14.691z" />
+      <path fill="#4CAF50" d="M24 44c5.166 0 9.86-1.977 13.409-5.192l-6.19-5.238A11.91 11.91 0 0 1 24 36c-5.202 0-9.619-3.317-11.283-7.946l-6.522 5.025C9.505 39.556 16.227 44 24 44z" />
+      <path fill="#1976D2" d="M43.611 20.083H42V20H24v8h11.303a12.04 12.04 0 0 1-4.087 5.571l.003-.002 6.19 5.238C36.971 39.205 44 34 44 24c0-1.341-.138-2.65-.389-3.917z" />
+    </svg>
+  );
+}
+
+/** Errors the provider sends back in the URL (?error=… or #error=…); cleaned from the address bar. */
+function takeOAuthErrorFromUrl(): string | null {
+  const query = new URLSearchParams(window.location.search);
+  const hash = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+  const code = query.get('error') || hash.get('error');
+  if (!code) return null;
+  ['error', 'error_code', 'error_description'].forEach((k) => query.delete(k));
+  const qs = query.toString();
+  window.history.replaceState(null, '', `${window.location.pathname}${qs ? `?${qs}` : ''}`);
+  return code === 'access_denied'
+    ? 'Cancelaste el inicio de sesión con Google.'
+    : 'No se pudo iniciar sesión con Google. Inténtalo de nuevo o usa tu correo y contraseña.';
+}
+
 const RESEND_COOLDOWN_SECONDS = 60;
 
 interface AuthScreenProps {
@@ -52,7 +82,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
   const [otp, setOtp] = useState('');
   const [resendIn, setResendIn] = useState(0);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(takeOAuthErrorFromUrl);
   const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
@@ -99,6 +129,22 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
     } catch (err) {
       setError(describeSupabaseError(err));
     } finally {
+      setBusy(false);
+    }
+  };
+
+  // Google sign-in leaves the app and comes back already signed in (a pending invite stays in sessionStorage)
+  const handleGoogle = async () => {
+    if (!sb) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    const { error: err } = await sb.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo: `${window.location.origin}/` },
+    });
+    if (err) {
+      setError(describeSupabaseError(err));
       setBusy(false);
     }
   };
@@ -213,6 +259,21 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
       ? 'Enviar enlace'
       : 'Guardar contraseña';
 
+  // A password-recovery link still opens the "new password" form even with e-mail sign-in hidden
+  const showEmailForm = EMAIL_AUTH_ENABLED || mode === 'new_password';
+
+  const googleButton = (
+    <button
+      type="button"
+      onClick={() => void handleGoogle()}
+      disabled={busy}
+      className="w-full min-h-[48px] rounded-xl bg-white text-slate-800 border border-slate-300 dark:border-white/20 text-sm font-semibold flex items-center justify-center gap-2.5 shadow-sm hover:bg-slate-50 disabled:opacity-60"
+    >
+      {busy ? <Loader2 className="w-5 h-5 animate-spin" /> : <GoogleLogo className="w-5 h-5" />}
+      Continuar con Google
+    </button>
+  );
+
   return (
     <div className="min-h-dvh w-full flex flex-col lg:flex-row bg-[var(--bg-canvas)] text-[var(--text-primary)]">
       {/* Brand panel: compact header on mobile, full side panel on desktop */}
@@ -278,8 +339,27 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                 El servicio no está disponible en este momento. Inténtalo más tarde.
               </div>
             </div>
+          ) : !showEmailForm ? (
+            <div className="space-y-3">
+              {googleButton}
+              <p className="text-xs text-center text-[var(--text-muted)]">
+                Durante la etapa de prueba solo se puede entrar con una cuenta de Google autorizada.
+              </p>
+              {error && (
+                <div className="p-3 rounded-xl bg-rose-500/10 text-sm text-rose-700 dark:text-rose-300">{error}</div>
+              )}
+            </div>
           ) : (
             <form onSubmit={handleSubmit} className="space-y-3.5" noValidate>
+              {(mode === 'signin' || mode === 'signup') && (
+                <>
+                  {googleButton}
+                  <div className="flex items-center gap-3 text-xs text-[var(--text-muted)]">
+                    <span className="flex-1 h-px bg-[var(--glass-border)]" />o con tu correo
+                    <span className="flex-1 h-px bg-[var(--glass-border)]" />
+                  </div>
+                </>
+              )}
               {mode === 'signup' && (
                 <label className="block space-y-1.5">
                   <span className="text-sm font-semibold text-[var(--text-secondary)]">
@@ -475,7 +555,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
             </form>
           )}
 
-          {sb && mode === 'signin' && (
+          {sb && mode === 'signin' && EMAIL_AUTH_ENABLED && (
             <p className="text-sm text-center text-[var(--text-muted)]">
               ¿No tienes cuenta?{' '}
               <button

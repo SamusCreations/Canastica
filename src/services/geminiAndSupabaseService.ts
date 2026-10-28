@@ -117,7 +117,7 @@ export function hasAiQuotaLeft(): boolean {
 
 export function describeAiQuota(q: AiQuota | null): string {
   if (!q) return '';
-  if (q.exempt) return 'Consultas de IA sin límite (developer)';
+  if (q.exempt) return 'Consultas de IA sin límite';
   if (q.remaining <= 0) return `Llegaste al límite de ${q.limit} consultas de IA por hoy. Vuelve a intentarlo mañana.`;
   return `Te quedan ${q.remaining} de ${q.limit} consultas de IA hoy`;
 }
@@ -137,9 +137,13 @@ export async function loadDevStatus(): Promise<DevStatus> {
     return { isDeveloper: false };
   }
   const started = performance.now();
-  const { data } = await client.functions
+  const { data, error } = await client.functions
     .invoke(AI_FUNCTION_NAME, { body: { action: 'dev-status' } })
-    .catch(() => ({ data: null }));
+    .catch((err) => ({ data: null, error: err as Error }));
+  if (error) {
+    // Usually CORS: this origin is missing from ALLOWED_ORIGINS. Kept for problem reports.
+    devLog('error', 'Servidor', `dev-status falló (${error.name}) desde ${window.location.origin}`);
+  }
   const status: DevStatus = data?.isDeveloper ? { isDeveloper: true, config: data.config } : { isDeveloper: false };
   setDevStatus(status);
   devLog('info', 'Servidor', 'dev-status', {
