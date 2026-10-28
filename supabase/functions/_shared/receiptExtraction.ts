@@ -81,6 +81,10 @@ export function buildScanReceiptPrompt(language: 'es' | 'en' = 'es'): string {
   return `You are the receipt reader of Canastica, a grocery app for households in Costa Rica.
 Read the supermarket receipt in the image and return JSON that follows the response schema exactly.
 
+STEP -1: If the image is NOT a purchase receipt or ticket (a selfie, a document, a screenshot, a random photo),
+return { "isReceipt": false, "isBlurry": true, "items": [] } and stop. Never invent receipt data.
+Otherwise set "isReceipt": true.
+
 STEP 0: If the image is too blurry, dark, cut off or unreadable to extract the items reliably, return
 { "isBlurry": true, "blurryAdvice": "<short friendly tip in ${nameLang} on how to retake the photo>", "items": [] } and stop.
 
@@ -142,6 +146,7 @@ If it does not, re-read the item block: a missed line, a discount not applied, o
 export const SCAN_RECEIPT_RESPONSE_SCHEMA = {
   type: 'OBJECT',
   properties: {
+    isReceipt: { type: 'BOOLEAN', nullable: true },
     isBlurry: { type: 'BOOLEAN' },
     blurryAdvice: { type: 'STRING', nullable: true },
     supermarket: { type: 'STRING' },
@@ -239,6 +244,7 @@ export const SCAN_RECEIPT_RESPONSE_SCHEMA = {
   },
   required: ['isBlurry', 'items'],
   propertyOrdering: [
+    'isReceipt',
     'isBlurry',
     'blurryAdvice',
     'supermarket',

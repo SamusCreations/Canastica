@@ -9,7 +9,12 @@ import {
   Trash2,
   Wand2,
 } from 'lucide-react';
-import { parseNaturalLanguageShoppingInput } from '../services/geminiAndSupabaseService';
+import {
+  describeAiQuota,
+  MAX_SHOPPING_TEXT_CHARS,
+  parseNaturalLanguageShoppingInput,
+} from '../services/geminiAndSupabaseService';
+import { useAiQuota } from '../lib/useAiQuota';
 import {
   AutoCrossOffSummary,
   GroceryCategory,
@@ -64,6 +69,8 @@ export const ShoppingListView: React.FC<ShoppingListViewProps> = ({
   const [nlInput, setNlInput] = useState('');
   const [isParsing, setIsParsing] = useState(false);
   const lang = household.language;
+  const aiQuota = useAiQuota();
+  const aiAvailable = !aiQuota || aiQuota.exempt || aiQuota.remaining > 0;
 
   const handleParseAndAdd = async (e?: React.FormEvent, overrideText?: string) => {
     if (e) e.preventDefault();
@@ -72,7 +79,7 @@ export const ShoppingListView: React.FC<ShoppingListViewProps> = ({
 
     setIsParsing(true);
     try {
-      const parsed = await parseNaturalLanguageShoppingInput(text);
+      const parsed = await parseNaturalLanguageShoppingInput(text, lang === 'en' ? 'en' : 'es');
       if (parsed.length > 0) {
         onAddParsedItems(parsed);
         if (!overrideText) setNlInput('');
@@ -124,7 +131,7 @@ export const ShoppingListView: React.FC<ShoppingListViewProps> = ({
                 Agregar escribiendo
               </h2>
               <span className="text-[11px] text-[var(--text-muted)] hidden md:inline">
-                — Escribe varios productos y la IA los separa y agrupa por pasillo
+                — Escribe varios productos y se separan y agrupan por pasillo
               </span>
             </div>
           </div>
@@ -142,6 +149,7 @@ export const ShoppingListView: React.FC<ShoppingListViewProps> = ({
           <input
             type="text"
             value={nlInput}
+            maxLength={MAX_SHOPPING_TEXT_CHARS}
             onChange={(e) => setNlInput(e.target.value)}
             placeholder='Escribe ej.: "2 litros de leche, pan integral y detergente"...'
             className="liquid-input flex-1 px-3.5 py-2 rounded-lg text-xs sm:text-sm font-medium"
@@ -159,11 +167,18 @@ export const ShoppingListView: React.FC<ShoppingListViewProps> = ({
             ) : (
               <>
                 <Plus className="w-3.5 h-3.5" />
-                Añadir con IA
+                {aiAvailable ? 'Añadir con IA' : 'Añadir'}
               </>
             )}
           </button>
         </form>
+
+        {aiQuota && (
+          <p className={`text-[11px] ${aiAvailable ? 'text-[var(--text-muted)]' : 'text-amber-700 dark:text-amber-300 font-semibold'}`}>
+            {describeAiQuota(aiQuota)}
+            {!aiAvailable && ' Mientras tanto, la lista se separa por comas sin IA.'}
+          </p>
+        )}
 
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]">

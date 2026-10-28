@@ -18,8 +18,12 @@ import {
 import {
   normalizeReceiptProduct,
   normalizeToBaseUnit,
+  describeAiQuota,
+  getSupabaseClient,
   scanReceiptImageWithAI,
 } from '../services/geminiAndSupabaseService';
+import { useAiQuota } from '../lib/useAiQuota';
+import { openReportProblem } from '../lib/reportProblem';
 import {
   CurrencyCode,
   GroceryCategory,
@@ -123,6 +127,8 @@ export const ReceiptScannerModal: React.FC<ReceiptScannerModalProps> = ({
   onUpdatePurchase,
 }) => {
   const isEditing = Boolean(editingPurchase);
+  const aiQuota = useAiQuota();
+  const aiAvailable = !aiQuota || aiQuota.exempt || aiQuota.remaining > 0;
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -508,19 +514,38 @@ export const ReceiptScannerModal: React.FC<ReceiptScannerModalProps> = ({
                     />
                     <button
                       onClick={() => cameraInputRef.current?.click()}
-                      className="liquid-lens-btn px-5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2"
+                      disabled={!aiAvailable}
+                      className="liquid-lens-btn px-5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 disabled:opacity-50"
                     >
                       <Camera className="w-4 h-4" />
                       Tomar Foto con Cámara
                     </button>
                     <button
                       onClick={() => fileInputRef.current?.click()}
-                      className="liquid-glass liquid-glass-interactive px-5 py-2.5 rounded-xl text-xs font-semibold flex items-center gap-2"
+                      disabled={!aiAvailable}
+                      className="liquid-glass liquid-glass-interactive px-5 py-2.5 rounded-xl text-xs font-semibold flex items-center gap-2 disabled:opacity-50"
                     >
                       <Upload className="w-4 h-4 text-avocado-600 dark:text-avocado-400" />
                       Subir Imagen
                     </button>
+                    <button
+                      onClick={handleEnterManually}
+                      className="liquid-glass-subtle liquid-glass-interactive px-5 py-2.5 rounded-xl text-xs font-semibold flex items-center gap-2"
+                    >
+                      <Plus className="w-4 h-4" />
+                      Registrar sin Escanear
+                    </button>
                   </div>
+                  {aiQuota && (
+                    <p
+                      className={`mt-4 text-[11px] ${
+                        aiAvailable ? 'text-[var(--text-muted)]' : 'text-amber-700 dark:text-amber-300 font-semibold'
+                      }`}
+                    >
+                      {describeAiQuota(aiQuota)}
+                      {!aiAvailable && ' Puedes registrar la factura a mano.'}
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -577,6 +602,19 @@ export const ReceiptScannerModal: React.FC<ReceiptScannerModalProps> = ({
                   <RefreshCw className="w-4 h-4" />
                   Volver a Intentar / Elegir Otra Foto
                 </button>
+                {getSupabaseClient() && (
+                  <button
+                    onClick={() =>
+                      openReportProblem({ prefill: `Error al escanear una factura: "${blurryAdvice}"
+
+` })
+                    }
+                    className="liquid-glass-subtle liquid-glass-interactive px-5 py-2.5 rounded-xl text-xs font-semibold flex items-center gap-2 text-rose-600 dark:text-rose-400"
+                  >
+                    <FileWarning className="w-4 h-4" />
+                    Reportar este Problema
+                  </button>
+                )}
                 {failedImageUrl && (
                   <button
                     onClick={handleEnterManually}
