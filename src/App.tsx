@@ -4,7 +4,12 @@ import { AlertTriangle, Loader2, RefreshCw } from 'lucide-react';
 import { AuthScreen } from './components/AuthScreen';
 import { HouseholdOnboarding } from './components/HouseholdOnboarding';
 import { HouseholdWorkspace } from './HouseholdWorkspace';
-import { getSupabaseClient } from './services/geminiAndSupabaseService';
+import {
+  getSupabaseClient,
+  loadDevStatus,
+  refreshAiQuota,
+} from './services/geminiAndSupabaseService';
+import { devLog, setDevContext, setDevStatus } from './lib/devConsole';
 import {
   describeSupabaseError,
   HouseholdMembership,
@@ -101,6 +106,7 @@ export function App() {
       setAuthReady(true);
     });
     const { data: sub } = sb.auth.onAuthStateChange((event, newSession) => {
+      devLog('info', 'Sesión', event);
       if (event === 'PASSWORD_RECOVERY') setIsRecovery(true);
       setSession(newSession);
       setAuthReady(true);
@@ -112,6 +118,22 @@ export function App() {
   }, [sb]);
 
   const userId = session?.user.id ?? null;
+  const userEmail = session?.user.email ?? null;
+
+  // The server decides whether this account may see the developer console
+  useEffect(() => {
+    if (!userId) {
+      setDevStatus(null);
+      return;
+    }
+    setDevContext({ userId, email: userEmail });
+    void loadDevStatus();
+    void refreshAiQuota();
+  }, [userId, userEmail]);
+
+  useEffect(() => {
+    setDevContext({ householdId: activeHouseholdId });
+  }, [activeHouseholdId]);
 
   const refreshMemberships = useCallback(async () => {
     if (!sb || !userId) return;

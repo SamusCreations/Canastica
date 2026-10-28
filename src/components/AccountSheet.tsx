@@ -1,5 +1,6 @@
 import React from 'react';
-import { Check, Home, LogOut, Moon, RefreshCw, Repeat, Sun, X } from 'lucide-react';
+import { Check, Home, LogOut, MessageSquareWarning, Moon, RefreshCw, Repeat, Sun, X } from 'lucide-react';
+import { openReportProblem } from '../lib/reportProblem';
 import { HouseholdMembership } from '../services/householdRepository';
 import { CurrencyCode, HouseholdMember, LanguageCode } from '../types/grocery';
 import { Avatar } from './Avatar';
@@ -180,6 +181,18 @@ export const AccountSheet: React.FC<AccountSheetProps> = ({
         </div>
 
         <div className="space-y-1.5 pt-1 border-t border-[var(--glass-border)]">
+          {mode === 'cloud' && (
+            <button
+              onClick={() => {
+                onClose();
+                openReportProblem();
+              }}
+              className="w-full min-h-[48px] px-3 rounded-xl flex items-center gap-3 text-sm font-semibold hover:bg-[var(--glass-bg-hover)]"
+            >
+              <MessageSquareWarning className="w-4 h-4 text-[var(--text-muted)]" />
+              {language === 'en' ? 'Report a problem' : 'Reportar un problema'}
+            </button>
+          )}
           {mode === 'demo' ? (
             <>
               <button

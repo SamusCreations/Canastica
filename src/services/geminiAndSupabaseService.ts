@@ -27,6 +27,7 @@ import {
   monthLabel,
   monthName,
 } from '../utils/dates';
+import { devLog, setDevStatus, type DevStatus } from '../lib/devConsole';
 
 export interface CloudConfig {
   supabaseUrl: string;
@@ -65,13 +66,87 @@ export function getSupabaseClient(): SupabaseClient | null {
   return null;
 }
 
-const AI_FUNCTION_NAME = 'assistant';
+export const AI_FUNCTION_NAME = 'assistant';
 
 let lastGeminiError: string | null = null;
 
 /** Why the last AI call failed, in words the user can act on (null after a success). */
 export function getLastGeminiError(): string | null {
   return lastGeminiError;
+}
+
+// ---------------------------------------------------------------------------
+// Daily AI quota (enforced on the server; mirrored here to show it and disable buttons)
+// ---------------------------------------------------------------------------
+
+export interface AiQuota {
+  used: number;
+  limit: number;
+  remaining: number;
+  exempt: boolean;
+}
+
+let aiQuota: AiQuota | null = null;
+const quotaListeners = new Set<() => void>();
+
+export function getAiQuota(): AiQuota | null {
+  return aiQuota;
+}
+
+export function subscribeAiQuota(listener: () => void): () => void {
+  quotaListeners.add(listener);
+  return () => quotaListeners.delete(listener);
+}
+
+function setAiQuota(next: unknown): void {
+  if (!next || typeof next !== 'object') return;
+  const q = next as Partial<AiQuota>;
+  if (typeof q.limit !== 'number') return;
+  aiQuota = {
+    used: Number(q.used ?? 0),
+    limit: q.limit,
+    remaining: Number(q.remaining ?? 0),
+    exempt: Boolean(q.exempt),
+  };
+  quotaListeners.forEach((l) => l());
+}
+
+export function hasAiQuotaLeft(): boolean {
+  return !aiQuota || aiQuota.exempt || aiQuota.remaining > 0;
+}
+
+export function describeAiQuota(q: AiQuota | null): string {
+  if (!q) return '';
+  if (q.exempt) return 'Consultas de IA sin límite (developer)';
+  if (q.remaining <= 0) return `Llegaste al límite de ${q.limit} consultas de IA por hoy. Vuelve a intentarlo mañana.`;
+  return `Te quedan ${q.remaining} de ${q.limit} consultas de IA hoy`;
+}
+
+export async function refreshAiQuota(): Promise<void> {
+  const client = getSupabaseClient();
+  if (!client) return;
+  const { data } = await client.functions.invoke(AI_FUNCTION_NAME, { body: { action: 'quota' } }).catch(() => ({ data: null }));
+  if (data?.quota) setAiQuota(data.quota);
+}
+
+/** Asks the server whether this account is a developer; only then is the dev console enabled. */
+export async function loadDevStatus(): Promise<DevStatus> {
+  const client = getSupabaseClient();
+  if (!client) {
+    setDevStatus(null);
+    return { isDeveloper: false };
+  }
+  const started = performance.now();
+  const { data } = await client.functions
+    .invoke(AI_FUNCTION_NAME, { body: { action: 'dev-status' } })
+    .catch(() => ({ data: null }));
+  const status: DevStatus = data?.isDeveloper ? { isDeveloper: true, config: data.config } : { isDeveloper: false };
+  setDevStatus(status);
+  devLog('info', 'Servidor', 'dev-status', {
+    durationMs: Math.round(performance.now() - started),
+    detail: status.config,
+  });
+  return status;
 }
 
 const AI_BUSY_MESSAGE =
@@ -84,6 +159,8 @@ function describeGeminiError(code: unknown, status?: number): string {
   if (status === 401 || code === 'unauthorized') {
     return 'Tu sesión expiró; vuelve a iniciar sesión.';
   }
+  if (code === 'AI_QUOTA') return describeAiQuota(aiQuota) || 'Llegaste al límite de consultas de IA por hoy. Vuelve a intentarlo mañana.';
+  if (code === 'too_large') return 'La imagen es demasiado grande. Prueba con otra foto.';
   if (code === 'busy' || status === 429 || status === 503) return AI_BUSY_MESSAGE;
   if (code === 'offline') return 'Sin conexión a internet. Revisa tu conexión e inténtalo de nuevo.';
   return AI_GENERIC_MESSAGE;
@@ -96,6 +173,9 @@ async function invokeGeminiJSON<T>(action: string, payload: Record<string, unkno
     return null;
   }
 
+  const started = performance.now();
+  const elapsed = () => Math.round(performance.now() - started);
+  devLog('info', 'IA', `${action}: enviando`);
   try {
     const { data, error } = await client.functions.invoke(AI_FUNCTION_NAME, {
       body: { action, payload },
@@ -104,20 +184,30 @@ async function invokeGeminiJSON<T>(action: string, payload: Record<string, unkno
       if (error instanceof FunctionsHttpError) {
         const response = error.context as Response;
         const body = await response.json().catch(() => null);
+        setAiQuota(body?.quota);
         lastGeminiError = describeGeminiError(body?.code, response.status);
+        devLog('error', 'IA', `${action}: HTTP ${response.status} ${body?.code ?? ''}`, {
+          durationMs: elapsed(),
+          detail: body,
+        });
       } else {
         lastGeminiError = describeGeminiError(navigator.onLine ? 'internal' : 'offline');
+        devLog('error', 'IA', `${action}: ${error.name}`, { durationMs: elapsed(), detail: error.message });
       }
       return null;
     }
+    setAiQuota(data?.quota);
     if (data?.error) {
       lastGeminiError = describeGeminiError(data.code);
+      devLog('error', 'IA', `${action}: ${data.code}`, { durationMs: elapsed(), detail: data });
       return null;
     }
     lastGeminiError = null;
+    devLog('success', 'IA', `${action}: OK`, { durationMs: elapsed(), detail: data?.debug });
     return data as T;
-  } catch {
+  } catch (err) {
     lastGeminiError = describeGeminiError(navigator.onLine ? 'internal' : 'offline');
+    devLog('error', 'IA', `${action}: excepción`, { durationMs: elapsed(), detail: String(err) });
     return null;
   }
 }
@@ -145,10 +235,47 @@ const VALID_CATEGORIES: GroceryCategory[] = [
   'Personal Care',
 ];
 
+/** Downscales big camera photos before reading them: faster upload, fewer failures. */
+export async function shrinkImageDataUrl(dataUrl: string, maxSide = 2000, quality = 0.85): Promise<string> {
+  try {
+    const blob = await (await fetch(dataUrl)).blob();
+    if (!blob.type.startsWith('image/') || blob.type === 'image/svg+xml') return dataUrl;
+    const bitmap = await createImageBitmap(blob);
+    const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
+    if (scale === 1 && blob.size < 1_500_000 && blob.type === 'image/jpeg') return dataUrl;
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(bitmap.width * scale);
+    canvas.height = Math.round(bitmap.height * scale);
+    canvas.getContext('2d')?.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL('image/jpeg', quality);
+  } catch {
+    return dataUrl;
+  }
+}
+
 export async function scanReceiptImageWithAI(
-  base64DataUrl: string,
+  originalDataUrl: string,
   language: 'es' | 'en' = 'es'
 ): Promise<ScannedReceiptResult> {
+  if (!hasAiQuotaLeft()) {
+    return {
+      isBlurry: true,
+      blurryAdvice: describeAiQuota(aiQuota),
+      supermarket: '',
+      purchaseDate: getTodayIso(),
+      dateSource: 'none',
+      discounts: 0,
+      taxes: 0,
+      receiptTotal: 0,
+      items: [],
+    };
+  }
+  const shrinkStart = performance.now();
+  const base64DataUrl = await shrinkImageDataUrl(originalDataUrl);
+  devLog('info', 'Escaneo', 'Imagen preparada', {
+    durationMs: Math.round(performance.now() - shrinkStart),
+    detail: { originalChars: originalDataUrl.length, sentChars: base64DataUrl.length },
+  });
   const base64Clean = base64DataUrl.includes(',')
     ? base64DataUrl.split(',')[1]
     : base64DataUrl;
@@ -164,6 +291,10 @@ export async function scanReceiptImageWithAI(
   if (aiResult && (aiResult.isBlurry || Array.isArray(aiResult.items))) {
     // The Edge Function already reconciles; running it again is idempotent
     const reconciled = reconcileReceipt(aiResult);
+    devLog(reconciled.isBlurry ? 'warn' : 'success', 'Escaneo', reconciled.isBlurry
+      ? 'La IA no pudo leer la factura'
+      : `${reconciled.items.length} productos, total ${reconciled.receiptTotal}, fecha ${reconciled.purchaseDate || '—'} (${reconciled.dateSource})`,
+    { detail: reconciled.validation });
     return {
       ...reconciled,
       blurryAdvice: reconciled.blurryAdvice ?? undefined,
@@ -198,18 +329,27 @@ export interface ParsedShoppingInputItem {
   unit: string;
 }
 
+export const MAX_SHOPPING_TEXT_CHARS = 300;
+
 export async function parseNaturalLanguageShoppingInput(
-  rawInput: string
+  rawInput: string,
+  language: 'es' | 'en' = 'es'
 ): Promise<ParsedShoppingInputItem[]> {
-  const trimmed = rawInput.trim();
+  const trimmed = rawInput.trim().slice(0, MAX_SHOPPING_TEXT_CHARS);
   if (!trimmed) return [];
 
-  const aiParsed = await invokeGeminiJSON<ParsedShoppingInputItem[]>('parse-shopping-input', {
-    text: trimmed,
-  });
-
-  if (Array.isArray(aiParsed) && aiParsed.length > 0) {
-    return aiParsed;
+  // Without quota left, the simple local splitter below still works
+  if (hasAiQuotaLeft()) {
+    const aiParsed = await invokeGeminiJSON<{ items?: ParsedShoppingInputItem[] }>('parse-shopping-input', {
+      text: trimmed,
+      language,
+    });
+    const items = aiParsed?.items?.filter((it) =>
+      VALID_CATEGORIES.includes(it.category)
+    );
+    if (items && items.length > 0) {
+      return items;
+    }
   }
 
   const segments = trimmed

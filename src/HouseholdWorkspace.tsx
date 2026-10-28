@@ -86,6 +86,8 @@ import {
   monthName,
   setReferenceDate,
 } from './utils/dates';
+import { devLog } from './lib/devConsole';
+import { setReportScreenContext } from './lib/appContext';
 import { formatCurrency } from './utils/formatters';
 import { BrandMark } from './components/BrandLogo';
 
@@ -296,8 +298,21 @@ export function HouseholdWorkspace({
       return;
     }
     setIsSyncing(true);
+    const started = performance.now();
     try {
       const snap = await loadHouseholdSnapshot(sb, householdId);
+      devLog('success', 'Supabase', 'Datos del hogar cargados', {
+        durationMs: Math.round(performance.now() - started),
+        detail: {
+          householdId,
+          purchases: snap.purchases.length,
+          shoppingList: snap.shoppingList.length,
+          pantry: snap.pantry.length,
+          latestPurchases: snap.purchases
+            .slice(0, 5)
+            .map((p) => ({ date: p.purchaseDate, store: p.supermarket, total: p.totalAmount })),
+        },
+      });
       setHousehold(snap.household);
       setPurchases(snap.purchases);
       setShoppingList(snap.shoppingList);
@@ -324,7 +339,13 @@ export function HouseholdWorkspace({
     (op: (client: SupabaseClient) => Promise<void>) => {
       if (!isCloud || !sb) return;
       pendingWritesRef.current += 1;
+      const started = performance.now();
       op(sb)
+        .then(() =>
+          devLog('success', 'Supabase', 'Cambio guardado', {
+            durationMs: Math.round(performance.now() - started),
+          })
+        )
         .catch((err) => {
           showToast(describeSupabaseError(err));
           // Re-sync with the server so the UI never shows a change that wasn't saved
@@ -377,7 +398,12 @@ export function HouseholdWorkspace({
     ['shopping_list_items', 'pantry_items', 'purchases'].forEach((table) =>
       channel.on('postgres_changes', { event: 'DELETE', schema: 'public', table }, scheduleReload)
     );
-    channel.subscribe((status) => setRealtimeConnected(status === 'SUBSCRIBED'));
+    channel.subscribe((status, err) => {
+      setRealtimeConnected(status === 'SUBSCRIBED');
+      devLog(status === 'SUBSCRIBED' ? 'success' : 'warn', 'Tiempo real', status, {
+        detail: err ? String(err) : undefined,
+      });
+    });
 
     // Catch up after the phone wakes the tab back up
     const onVisible = () => {
@@ -888,6 +914,24 @@ export function HouseholdWorkspace({
   ];
 
   const activeNavMeta = navItems.find((n) => n.id === activeTab) || navItems[0];
+
+  // Plain module state (no re-render): tells problem reports where the user is
+  setReportScreenContext({
+    screen: activeNavMeta.label,
+    openPanel: editingPurchase
+      ? 'Editar factura'
+      : isScannerOpen
+      ? 'Escáner de facturas'
+      : inspectedPurchase
+      ? 'Detalle de factura'
+      : isAssistantOpen
+      ? 'Asistente'
+      : isAccountOpen
+      ? 'Menú de cuenta'
+      : null,
+    householdId: isCloud ? householdId : null,
+    language: lang,
+  });
 
   const monthPrefix = getCurrentMonthPrefix();
   const monthSpent = purchases

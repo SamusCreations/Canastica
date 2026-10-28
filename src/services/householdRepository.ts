@@ -6,6 +6,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { normalizeReceiptProduct } from '../lib/restockEngine';
+import { devLog } from '../lib/devConsole';
 import {
   BaseUnit,
   CategoryBudget,
@@ -86,6 +87,9 @@ export function newId(): string {
 /** Turns Supabase / RPC error codes into short Spanish messages for the UI. */
 export function describeSupabaseError(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err ?? '');
+  devLog('error', 'Supabase', err instanceof RepositoryError ? `${err.context}: ${raw}` : raw, {
+    detail: err instanceof Error ? { name: err.name, stack: err.stack } : err,
+  });
   const msg = raw.toLowerCase();
   if (msg.includes('invalid login credentials')) return 'Correo o contraseña incorrectos.';
   if (msg.includes('email not confirmed'))
@@ -107,7 +111,6 @@ export function describeSupabaseError(err: unknown): string {
     return 'Se alcanzó el límite de correos. Intenta más tarde.';
   if (msg.includes('rate limit')) return 'Demasiados intentos. Espera un momento.';
   // Never show raw server text (it can name tables, columns or constraints)
-  if (import.meta.env.DEV) console.error(err);
   if (err instanceof RepositoryError) {
     return `${err.context}: no se pudo completar. Inténtalo de nuevo.`;
   }
