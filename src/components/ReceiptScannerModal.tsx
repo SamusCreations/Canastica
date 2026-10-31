@@ -1,8 +1,9 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Camera,
   CheckCircle2,
+  Clock,
   FileWarning,
   Plus,
   RefreshCw,
@@ -21,7 +22,15 @@ import {
   describeAiQuota,
   getSupabaseClient,
   scanReceiptImageWithAI,
+  type ScannedReceiptResult,
 } from '../services/geminiAndSupabaseService';
+import {
+  askNotificationPermission,
+  enqueueAiRequest,
+  removeAiQueueEntry,
+  updateAiQueueEntry,
+  withAiTimeout,
+} from '../lib/aiQueue';
 import { useAiQuota } from '../lib/useAiQuota';
 import { openReportProblem } from '../lib/reportProblem';
 import {
@@ -74,6 +83,12 @@ interface ReceiptScannerModalProps {
   /** When set, the modal opens on the confirmation step to edit this saved receipt */
   editingPurchase?: Purchase | null;
   onUpdatePurchase?: (purchase: Purchase) => void;
+  /** Household the AI queue entries belong to */
+  householdId?: string;
+  /** A queued receipt the AI already read: the modal opens on its review step */
+  queuedScan?: { id: string; dataUrl: string; result: ScannedReceiptResult } | null;
+  /** Called after a queued receipt is saved */
+  onQueuedScanSaved?: (queueId: string) => void;
 }
 
 type DateSource = 'printed' | 'clave' | 'none';
@@ -125,6 +140,9 @@ export const ReceiptScannerModal: React.FC<ReceiptScannerModalProps> = ({
   onSavePurchase,
   editingPurchase = null,
   onUpdatePurchase,
+  householdId = '',
+  queuedScan = null,
+  onQueuedScanSaved,
 }) => {
   const isEditing = Boolean(editingPurchase);
   const aiQuota = useAiQuota();
@@ -132,9 +150,12 @@ export const ReceiptScannerModal: React.FC<ReceiptScannerModalProps> = ({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
 
-  const [step, setStep] = useState<'upload' | 'scanning' | 'blurry_error' | 'confirm'>(
+  const [step, setStep] = useState<'upload' | 'scanning' | 'blurry_error' | 'ai_unavailable' | 'queued' | 'confirm'>(
     editingPurchase ? 'confirm' : 'upload'
   );
+  const [aiUnavailableReason, setAiUnavailableReason] = useState<'slow' | 'down'>('slow');
+  // Scan still running after the time limit: its result is used if the user is still waiting
+  const lateScanRef = useRef<{ dataUrl: string; queueId: string | null; waiting: boolean } | null>(null);
   const [scanStageText, setScanStageText] = useState('Leyendo tu factura…');
   const [blurryAdvice, setBlurryAdvice] = useState('');
   const [isDragging, setIsDragging] = useState(false);
@@ -166,6 +187,13 @@ export const ReceiptScannerModal: React.FC<ReceiptScannerModalProps> = ({
   const [newStoreType, setNewStoreType] = useState<SupermarketType>('Abastecedor / Pulpería');
   const [newStoreLocation, setNewStoreLocation] = useState('');
 
+  // A receipt the queue already read opens straight on its review
+  useEffect(() => {
+    if (queuedScan) applyScanResult(queuedScan.result, queuedScan.dataUrl);
+    // Only once per queued receipt (the modal is keyed by it)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   if (!isOpen) return null;
 
   const runSimulatedScanSequence = async (callback: () => Promise<void> | void) => {
@@ -179,78 +207,132 @@ export const ReceiptScannerModal: React.FC<ReceiptScannerModalProps> = ({
     reader.onload = () => {
       const dataUrl = reader.result as string;
       runSimulatedScanSequence(async () => {
-        const result = await scanReceiptImageWithAI(dataUrl, language);
-        if (result.isBlurry) {
-          setBlurryAdvice(
-            result.blurryAdvice ||
-              'El texto del recibo se ve desenfocado. Mantén el teléfono firme y evita sombras.'
-          );
+        lateScanRef.current = null;
+        const timed = await withAiTimeout(scanReceiptImageWithAI(dataUrl, language));
+        if (timed.timedOut) {
+          // Too slow: offer the queue or manual entry, but keep listening for the answer
+          const pending = { dataUrl, queueId: null as string | null, waiting: true };
+          lateScanRef.current = pending;
           setFailedImageUrl(dataUrl);
-          setStep('blurry_error');
+          setAiUnavailableReason('slow');
+          setStep('ai_unavailable');
+          timed.late.then((late) => {
+            const ok = !late.isBlurry && !late.aiUnavailable;
+            if (pending.queueId) {
+              if (ok) updateAiQueueEntry(pending.queueId, { status: 'ready', result: late });
+            } else if (pending.waiting && lateScanRef.current === pending) {
+              lateScanRef.current = null;
+              if (ok) applyScanResult(late, dataUrl);
+            }
+          });
           return;
         }
-        // "PALI SARCHI" on the receipt -> the household's "Palí" store
-        const fold = (v: string) =>
-          v.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
-        const scannedStore = fold(result.supermarket || '');
-        const knownStore = scannedStore
-          ? supermarkets.find((st) => {
-              const name = fold(st.name);
-              return name === scannedStore || scannedStore.startsWith(`${name} `) || name.startsWith(`${scannedStore} `);
-            })
-          : undefined;
-        setSupermarket(knownStore?.name || result.supermarket || supermarkets[0]?.name || '');
-        // No printed date and no electronic key: default to today and ask the user to confirm
-        const source: DateSource = result.purchaseDate ? result.dateSource ?? 'printed' : 'none';
-        setDateSource(source);
-        setPurchaseDate(source === 'none' ? getTodayIso() : result.purchaseDate);
-        setDiscounts(result.discounts || 0);
-        setTaxes(result.taxes || 0);
-        setTaxesIncluded(result.pricesIncludeTax ?? true);
-        setReceiptGrandTotal(result.receiptTotal || 0);
-        setScanWarnings(result.validation?.warnings ?? []);
-        setWasRepaired(Boolean(result.validation?.repaired));
-        setReceiptImageUrl(dataUrl);
-        const memory = buildReceiptMemory(purchaseHistory);
-        setDraftItems(
-          result.items.map((it, idx) =>
-            applyReceiptMemory(
-              {
-                id: `draft-up-${Date.now()}-${idx}`,
-                rawReceiptName: it.rawReceiptName,
-                normalizedName: it.normalizedName,
-                canonicalName: it.canonicalName,
-                category: it.category,
-                quantity: it.quantity,
-                unit: it.unit,
-                unitPrice: it.unitPrice,
-                grossPrice: it.grossPrice ?? it.totalPrice,
-                discount: it.discount ?? 0,
-                discountLabel: it.discountLabel,
-                totalPrice: it.totalPrice,
-                barcode: it.barcode,
-                pricingMode: it.pricingMode,
-                sizeKnown: it.sizeKnown,
-                needsReview: it.needsReview,
-                reviewReasons: it.reviewReasons,
-                isShared: it.isShared,
-              },
-              memory
-            )
-          ).map((d) =>
-            d.learnedFromHistory && d.sizeKnown
-              ? {
-                  ...d,
-                  reviewReasons: d.reviewReasons?.filter((r) => !r.startsWith('La factura no indica')),
-                }
-              : d
-          )
-        );
-        setStep('confirm');
+        const result = timed.value;
+        if (result.aiUnavailable) {
+          setFailedImageUrl(dataUrl);
+          setBlurryAdvice(result.blurryAdvice || '');
+          setAiUnavailableReason('down');
+          setStep('ai_unavailable');
+          return;
+        }
+        applyScanResult(result, dataUrl);
       });
     };
     reader.readAsDataURL(file);
   };
+
+  const handleQueueReceipt = () => {
+    const dataUrl = failedImageUrl;
+    if (!dataUrl) return;
+    const entry = enqueueAiRequest({ kind: 'receipt', householdId, dataUrl, language: language === 'en' ? 'en' : 'es' });
+    if (!entry) {
+      setBlurryAdvice('La cola ya tiene muchas facturas esperando. Regístrala a mano o inténtalo más tarde.');
+      setStep('blurry_error');
+      return;
+    }
+    if (lateScanRef.current) {
+      lateScanRef.current.queueId = entry.id;
+      lateScanRef.current.waiting = false;
+    }
+    askNotificationPermission();
+    setStep('queued');
+  };
+
+  const handleManualInsteadOfWaiting = () => {
+    if (lateScanRef.current) lateScanRef.current.waiting = false;
+    lateScanRef.current = null;
+    handleEnterManually();
+  };
+
+  function applyScanResult(result: ScannedReceiptResult, dataUrl: string) {
+    if (result.isBlurry) {
+      setBlurryAdvice(
+        result.blurryAdvice ||
+          'El texto del recibo se ve desenfocado. Mantén el teléfono firme y evita sombras.'
+      );
+      setFailedImageUrl(dataUrl);
+      setStep('blurry_error');
+      return;
+    }
+    // "PALI SARCHI" on the receipt -> the household's "Palí" store
+    const fold = (v: string) =>
+      v.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+    const scannedStore = fold(result.supermarket || '');
+    const knownStore = scannedStore
+      ? supermarkets.find((st) => {
+          const name = fold(st.name);
+          return name === scannedStore || scannedStore.startsWith(`${name} `) || name.startsWith(`${scannedStore} `);
+        })
+      : undefined;
+    setSupermarket(knownStore?.name || result.supermarket || supermarkets[0]?.name || '');
+    // No printed date and no electronic key: default to today and ask the user to confirm
+    const source: DateSource = result.purchaseDate ? result.dateSource ?? 'printed' : 'none';
+    setDateSource(source);
+    setPurchaseDate(source === 'none' ? getTodayIso() : result.purchaseDate);
+    setDiscounts(result.discounts || 0);
+    setTaxes(result.taxes || 0);
+    setTaxesIncluded(result.pricesIncludeTax ?? true);
+    setReceiptGrandTotal(result.receiptTotal || 0);
+    setScanWarnings(result.validation?.warnings ?? []);
+    setWasRepaired(Boolean(result.validation?.repaired));
+    setReceiptImageUrl(dataUrl);
+    const memory = buildReceiptMemory(purchaseHistory);
+    setDraftItems(
+      result.items.map((it, idx) =>
+        applyReceiptMemory(
+          {
+            id: `draft-up-${Date.now()}-${idx}`,
+            rawReceiptName: it.rawReceiptName,
+            normalizedName: it.normalizedName,
+            canonicalName: it.canonicalName,
+            category: it.category,
+            quantity: it.quantity,
+            unit: it.unit,
+            unitPrice: it.unitPrice,
+            grossPrice: it.grossPrice ?? it.totalPrice,
+            discount: it.discount ?? 0,
+            discountLabel: it.discountLabel,
+            totalPrice: it.totalPrice,
+            barcode: it.barcode,
+            pricingMode: it.pricingMode,
+            sizeKnown: it.sizeKnown,
+            needsReview: it.needsReview,
+            reviewReasons: it.reviewReasons,
+            isShared: it.isShared,
+          },
+          memory
+        )
+      ).map((d) =>
+        d.learnedFromHistory && d.sizeKnown
+          ? {
+              ...d,
+              reviewReasons: d.reviewReasons?.filter((r) => !r.startsWith('La factura no indica')),
+            }
+          : d
+      )
+    );
+    setStep('confirm');
+  }
 
   const itemsSubtotal = Math.round(
     draftItems.reduce((sum, item) => sum + (Number(item.totalPrice) || 0), 0)
@@ -404,6 +486,10 @@ export const ReceiptScannerModal: React.FC<ReceiptScannerModalProps> = ({
       onUpdatePurchase(newPurchase);
     } else {
       onSavePurchase(newPurchase);
+      if (queuedScan) {
+        removeAiQueueEntry(queuedScan.id);
+        onQueuedScanSaved?.(queuedScan.id);
+      }
     }
     setStep('upload');
     onClose();
@@ -572,6 +658,70 @@ export const ReceiptScannerModal: React.FC<ReceiptScannerModalProps> = ({
                   <div className="h-11 rounded-xl liquid-skeleton" />
                   <div className="h-11 rounded-xl liquid-skeleton" />
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* AI too slow or unavailable: queue it or type it by hand */}
+          {step === 'ai_unavailable' && (
+            <div className="max-w-xl mx-auto liquid-glass rounded-2xl p-6 border border-amber-500/40 text-center space-y-4">
+              <div className="w-12 h-12 rounded-xl bg-amber-500/15 flex items-center justify-center mx-auto text-amber-600 dark:text-amber-400">
+                <Clock className="w-6 h-6" />
+              </div>
+              <h3 className="text-base font-bold">
+                {aiUnavailableReason === 'slow' ? 'La IA está tardando mucho' : 'La IA no está disponible ahora'}
+              </h3>
+              <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
+                {aiUnavailableReason === 'slow'
+                  ? 'Puedes dejar la factura en cola y te avisamos cuando esté lista para revisar, o registrarla a mano.'
+                  : blurryAdvice || 'Puedes dejar la factura en cola o registrarla a mano.'}
+              </p>
+              <div className="flex flex-col sm:flex-row items-stretch justify-center gap-3 pt-2">
+                <button
+                  onClick={handleQueueReceipt}
+                  className="liquid-lens-btn px-5 py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2"
+                >
+                  <Clock className="w-4 h-4" />
+                  Dejar en cola
+                </button>
+                <button
+                  onClick={handleManualInsteadOfWaiting}
+                  className="liquid-glass-subtle liquid-glass-interactive px-5 py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2"
+                >
+                  <Plus className="w-4 h-4" />
+                  Registrar a mano
+                </button>
+              </div>
+              {aiUnavailableReason === 'slow' && (
+                <p className="text-[11px] text-[var(--text-muted)]">Si la IA responde mientras decides, se abre sola.</p>
+              )}
+            </div>
+          )}
+
+          {step === 'queued' && (
+            <div className="max-w-xl mx-auto liquid-glass rounded-2xl p-6 border border-emerald-500/40 text-center space-y-4">
+              <CheckCircle2 className="w-12 h-12 mx-auto text-emerald-500" />
+              <h3 className="text-base font-bold">Factura en cola</h3>
+              <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
+                La leeremos cuando la IA esté disponible y te avisaremos para que la revises antes de guardarla.
+                Puedes seguir agregando más facturas.
+              </p>
+              <div className="flex flex-col sm:flex-row items-stretch justify-center gap-3">
+                <button
+                  onClick={() => setStep('upload')}
+                  className="liquid-glass-subtle liquid-glass-interactive px-5 py-2.5 rounded-xl text-sm font-bold"
+                >
+                  Escanear otra
+                </button>
+                <button
+                  onClick={() => {
+                    setStep('upload');
+                    onClose();
+                  }}
+                  className="liquid-lens-btn px-5 py-2.5 rounded-xl text-sm font-bold"
+                >
+                  Listo
+                </button>
               </div>
             </div>
           )}

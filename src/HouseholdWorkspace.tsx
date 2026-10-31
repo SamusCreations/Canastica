@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   Activity,
@@ -41,7 +41,21 @@ import {
   INITIAL_SHOPPING_LIST,
 } from './data/seedHousehold';
 import { calculateRestockPredictions, normalizeReceiptProduct } from './lib/restockEngine';
-import { matchPurchasedItemsToShoppingList } from './services/geminiAndSupabaseService';
+import {
+  matchPurchasedItemsToShoppingList,
+  parseShoppingInputLocally,
+  parseShoppingInputWithAI,
+  scanReceiptImageWithAI,
+  type ScannedReceiptResult,
+} from './services/geminiAndSupabaseService';
+import {
+  getAiQueue,
+  loadAiQueue,
+  notifyAiQueue,
+  removeAiQueueEntry,
+  subscribeAiQueue,
+  updateAiQueueEntry,
+} from './lib/aiQueue';
 import {
   describeSupabaseError,
   HouseholdMembership,
@@ -262,6 +276,7 @@ export function HouseholdWorkspace({
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [inspectedPurchase, setInspectedPurchase] = useState<Purchase | null>(null);
   const [editingPurchase, setEditingPurchase] = useState<Purchase | null>(null);
+  const [queuedReview, setQueuedReview] = useState<{ id: string; dataUrl: string; result: ScannedReceiptResult } | null>(null);
   const [isAssistantOpen, setIsAssistantOpen] = useState(false);
   const [assistantInitialPrompt, setAssistantInitialPrompt] = useState<string | null>(null);
   const [isNotifOpen, setIsNotifOpen] = useState(false);
@@ -772,6 +787,74 @@ export function HouseholdWorkspace({
     persist((client) => deleteShoppingItems(client, ids));
   };
 
+  // ------------------------------------------------------------------------
+  // AI queue: requests saved while the AI was slow or down, retried in the background
+  // ------------------------------------------------------------------------
+  const aiQueue = useSyncExternalStore(subscribeAiQueue, getAiQueue);
+  const myQueue = aiQueue.filter((e) => e.householdId === householdId);
+  const queuedPending = myQueue.filter((e) => e.status === 'pending').length;
+  const queuedReady = myQueue.filter((e) => e.kind === 'receipt' && e.status === 'ready');
+  const addShoppingItemsRef = useRef(handleAddShoppingItems);
+  addShoppingItemsRef.current = handleAddShoppingItems;
+  const queueRunningRef = useRef(false);
+
+  const processAiQueue = useCallback(async () => {
+    if (queueRunningRef.current || !navigator.onLine || !isCloud) return;
+    queueRunningRef.current = true;
+    try {
+      await loadAiQueue();
+      for (const entry of getAiQueue()) {
+        if (entry.householdId !== householdId || entry.status !== 'pending') continue;
+        if (entry.kind === 'receipt') {
+          const result = await scanReceiptImageWithAI(entry.dataUrl, entry.language);
+          if (result.aiUnavailable) {
+            updateAiQueueEntry(entry.id, { attempts: entry.attempts + 1 });
+            break; // Still down: try again on the next round
+          }
+          updateAiQueueEntry(entry.id, { status: 'ready', result });
+          showToast('Una factura de la cola está lista para revisar', 'success');
+          notifyAiQueue('Canastica', 'Una factura en cola está lista para revisar.');
+        } else {
+          const items = await parseShoppingInputWithAI(entry.text, entry.language);
+          if (items === null) {
+            updateAiQueueEntry(entry.id, { attempts: entry.attempts + 1 });
+            break;
+          }
+          addShoppingItemsRef.current(items.length > 0 ? items : parseShoppingInputLocally(entry.text));
+          removeAiQueueEntry(entry.id);
+          showToast('Se agregaron a la lista los productos que estaban en cola', 'success');
+          notifyAiQueue('Canastica', 'Tu lista de compras en cola ya se agregó.');
+        }
+      }
+    } finally {
+      queueRunningRef.current = false;
+    }
+  }, [householdId, isCloud, showToast]);
+
+  useEffect(() => {
+    void processAiQueue();
+    const timer = window.setInterval(() => void processAiQueue(), 60_000);
+    const onOnline = () => void processAiQueue();
+    window.addEventListener('online', onOnline);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('online', onOnline);
+    };
+  }, [processAiQueue]);
+
+  // New entries are tried right away (a minute later), not only on the next interval
+  useEffect(() => {
+    if (queuedPending === 0) return;
+    const timer = window.setTimeout(() => void processAiQueue(), 45_000);
+    return () => window.clearTimeout(timer);
+  }, [queuedPending, processAiQueue]);
+
+  const openQueuedReview = () => {
+    const next = queuedReady[0];
+    if (next?.kind !== 'receipt' || !next.result) return;
+    setQueuedReview({ id: next.id, dataUrl: next.dataUrl, result: next.result });
+  };
+
   const handleRestockFeedback = (
     canonicalName: string,
     feedback: 'ran_out' | 'still_have_some',
@@ -1261,6 +1344,36 @@ export function HouseholdWorkspace({
           className="flex-1 w-full overflow-y-auto overflow-x-hidden overscroll-contain p-3 sm:p-4 pb-[calc(env(safe-area-inset-bottom)+150px)] lg:pb-6"
         >
           <div className="w-full max-w-7xl mx-auto">
+            {(queuedPending > 0 || queuedReady.length > 0) && (
+              <div className="mb-3 liquid-glass rounded-xl px-3 py-2 flex flex-wrap items-center justify-between gap-2 border border-amber-500/30">
+                <span className="text-xs font-semibold">
+                  {queuedReady.length > 0
+                    ? `${queuedReady.length} ${queuedReady.length === 1 ? 'factura lista' : 'facturas listas'} para revisar`
+                    : `${queuedPending} en cola esperando a la IA`}
+                  {queuedReady.length > 0 && queuedPending > 0 && (
+                    <span className="text-[var(--text-muted)] font-normal"> · {queuedPending} en espera</span>
+                  )}
+                </span>
+                <div className="flex items-center gap-2">
+                  {queuedReady.length > 0 && (
+                    <button
+                      onClick={openQueuedReview}
+                      className="liquid-lens-btn px-3 py-1 rounded-lg text-xs font-bold"
+                    >
+                      Revisar
+                    </button>
+                  )}
+                  {queuedReady.length > 0 && (
+                    <button
+                      onClick={() => removeAiQueueEntry(queuedReady[0].id)}
+                      className="text-[11px] text-rose-600 dark:text-rose-400 font-bold hover:underline"
+                    >
+                      Descartar
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
             {activeTab === 'dashboard' && (
               <DashboardView
                 household={household}
@@ -1281,6 +1394,7 @@ export function HouseholdWorkspace({
             {activeTab === 'shopping-list' && (
               <ShoppingListView
                 household={household}
+                householdId={householdId}
                 items={shoppingList}
                 predictions={predictions}
                 autoCrossOffSummary={autoCrossOffSummary}
@@ -1484,12 +1598,15 @@ export function HouseholdWorkspace({
 
       {/* Modals & Drawers */}
       <ReceiptScannerModal
-        key={editingPurchase ? `edit-${editingPurchase.id}` : 'new'}
-        isOpen={isScannerOpen || Boolean(editingPurchase)}
+        key={editingPurchase ? `edit-${editingPurchase.id}` : queuedReview ? `queued-${queuedReview.id}` : 'new'}
+        isOpen={isScannerOpen || Boolean(editingPurchase) || Boolean(queuedReview)}
         onClose={() => {
           setIsScannerOpen(false);
           setEditingPurchase(null);
+          setQueuedReview(null);
         }}
+        householdId={householdId}
+        queuedScan={queuedReview}
         editingPurchase={editingPurchase}
         onUpdatePurchase={handleUpdatePurchase}
         members={household.members}

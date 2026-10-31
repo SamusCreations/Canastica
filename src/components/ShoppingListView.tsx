@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   Check,
   CheckCircle2,
+  Clock,
   Loader2,
   Plus,
   RotateCcw,
@@ -12,8 +13,10 @@ import {
 import {
   describeAiQuota,
   MAX_SHOPPING_TEXT_CHARS,
-  parseNaturalLanguageShoppingInput,
+  parseShoppingInputLocally,
+  parseShoppingInputWithAI,
 } from '../services/geminiAndSupabaseService';
+import { askNotificationPermission, enqueueAiRequest, removeAiQueueEntry, withAiTimeout } from '../lib/aiQueue';
 import { useAiQuota } from '../lib/useAiQuota';
 import {
   AutoCrossOffSummary,
@@ -27,6 +30,7 @@ import { Avatar } from './Avatar';
 
 interface ShoppingListViewProps {
   household: Household;
+  householdId: string;
   items: ShoppingListItem[];
   predictions: RestockPrediction[];
   autoCrossOffSummary: AutoCrossOffSummary | null;
@@ -56,6 +60,7 @@ const EXAMPLE_NL_INPUTS = [
 
 export const ShoppingListView: React.FC<ShoppingListViewProps> = ({
   household,
+  householdId,
   items,
   predictions,
   autoCrossOffSummary,
@@ -72,21 +77,85 @@ export const ShoppingListView: React.FC<ShoppingListViewProps> = ({
   const aiQuota = useAiQuota();
   const aiAvailable = !aiQuota || aiQuota.exempt || aiQuota.remaining > 0;
 
+  // Text the AI could not handle in time: the user picks the queue or manual entry
+  const [stalled, setStalled] = useState<{ text: string; reason: 'slow' | 'down' } | null>(null);
+  const [queuedNotice, setQueuedNotice] = useState('');
+  const lateParseRef = useRef<{ text: string; queueId: string | null; waiting: boolean } | null>(null);
+
+  const addParsed = (items: ReturnType<typeof parseShoppingInputLocally>, fromInput: boolean) => {
+    if (items.length === 0) return;
+    onAddParsedItems(items);
+    if (fromInput) setNlInput('');
+  };
+
   const handleParseAndAdd = async (e?: React.FormEvent, overrideText?: string) => {
     if (e) e.preventDefault();
     const text = (overrideText ?? nlInput).trim();
     if (!text) return;
+    const language = lang === 'en' ? 'en' : 'es';
 
     setIsParsing(true);
+    setStalled(null);
+    setQueuedNotice('');
     try {
-      const parsed = await parseNaturalLanguageShoppingInput(text, lang === 'en' ? 'en' : 'es');
-      if (parsed.length > 0) {
-        onAddParsedItems(parsed);
-        if (!overrideText) setNlInput('');
+      const timed = await withAiTimeout(parseShoppingInputWithAI(text, language));
+      if (timed.timedOut) {
+        const pending = { text, queueId: null as string | null, waiting: true };
+        lateParseRef.current = pending;
+        setStalled({ text, reason: 'slow' });
+        timed.late.then((items) => {
+          if (!items) return;
+          const result = items.length > 0 ? items : parseShoppingInputLocally(text);
+          if (pending.queueId) {
+            // Answered after all: add it now and drop it from the queue
+            removeAiQueueEntry(pending.queueId);
+            onAddParsedItems(result);
+          } else if (pending.waiting && lateParseRef.current === pending) {
+            lateParseRef.current = null;
+            setStalled(null);
+            addParsed(result, !overrideText);
+          }
+        });
+        return;
       }
+      if (timed.value === null) {
+        setStalled({ text, reason: 'down' });
+        return;
+      }
+      addParsed(timed.value.length > 0 ? timed.value : parseShoppingInputLocally(text), !overrideText);
     } finally {
       setIsParsing(false);
     }
+  };
+
+  const handleQueueStalled = () => {
+    if (!stalled) return;
+    const entry = enqueueAiRequest({
+      kind: 'shopping',
+      householdId,
+      text: stalled.text,
+      language: lang === 'en' ? 'en' : 'es',
+    });
+    if (lateParseRef.current) {
+      lateParseRef.current.queueId = entry?.id ?? null;
+      lateParseRef.current.waiting = false;
+    }
+    setStalled(null);
+    if (!entry) {
+      setQueuedNotice('La cola está llena. Agrégalo a mano o inténtalo más tarde.');
+      return;
+    }
+    askNotificationPermission();
+    setNlInput('');
+    setQueuedNotice('En cola: se agregará a la lista cuando la IA esté disponible.');
+  };
+
+  const handleManualStalled = () => {
+    if (!stalled) return;
+    if (lateParseRef.current) lateParseRef.current.waiting = false;
+    lateParseRef.current = null;
+    addParsed(parseShoppingInputLocally(stalled.text), true);
+    setStalled(null);
   };
 
   const pendingItems = items.filter((i) => !i.isChecked);
@@ -172,6 +241,35 @@ export const ShoppingListView: React.FC<ShoppingListViewProps> = ({
             )}
           </button>
         </form>
+
+        {stalled && (
+          <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-2.5 space-y-2">
+            <p className="text-xs font-semibold flex items-center gap-1.5 text-amber-800 dark:text-amber-200">
+              <Clock className="w-3.5 h-3.5 shrink-0" />
+              {stalled.reason === 'slow' ? 'La IA está tardando mucho.' : 'La IA no está disponible ahora.'}
+            </p>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <button
+                type="button"
+                onClick={handleQueueStalled}
+                className="liquid-lens-btn px-3 py-1.5 rounded-lg text-xs font-bold"
+              >
+                Dejar en cola
+              </button>
+              <button
+                type="button"
+                onClick={handleManualStalled}
+                className="liquid-glass-subtle liquid-glass-interactive px-3 py-1.5 rounded-lg text-xs font-bold"
+              >
+                Agregar sin IA
+              </button>
+            </div>
+          </div>
+        )}
+
+        {queuedNotice && (
+          <p className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">{queuedNotice}</p>
+        )}
 
         {aiQuota && !aiQuota.exempt && (
           <p className={`text-[11px] ${aiAvailable ? 'text-[var(--text-muted)]' : 'text-amber-700 dark:text-amber-300 font-semibold'}`}>
