@@ -331,6 +331,8 @@ export interface ParsedShoppingInputItem {
   category: GroceryCategory;
   quantity: number;
   unit: string;
+  /** Place of purchase when the text mentions one */
+  store?: string;
 }
 
 export const MAX_SHOPPING_TEXT_CHARS = 300;
@@ -348,15 +350,20 @@ export async function parseNaturalLanguageShoppingInput(
       text: trimmed,
       language,
     });
-    const items = aiParsed?.items?.filter((it) =>
-      VALID_CATEGORIES.includes(it.category)
-    );
+    const items = aiParsed?.items
+      ?.filter((it) => VALID_CATEGORIES.includes(it.category))
+      .map((it) => ({ ...it, store: it.store?.trim() || undefined }));
     if (items && items.length > 0) {
       return items;
     }
   }
 
-  const segments = trimmed
+  // "…, pan y detergente en Palí": a capitalized place at the end applies to the whole list
+  const storeMatch = trimmed.match(/\s+(?:en|del|de la|at)\s+(?:el\s+|la\s+)?([A-ZÁÉÍÓÚÑ][\wÁÉÍÓÚÑáéíóúñ'&. -]{1,30})$/);
+  const listStore = storeMatch?.[1].trim();
+  const listText = storeMatch ? trimmed.slice(0, storeMatch.index) : trimmed;
+
+  const segments = listText
     .split(/(?:,|;|\by\b|\band\b|\be\b|\+)/i)
     .map((s) => s.trim())
     .filter(Boolean);
@@ -396,6 +403,7 @@ export async function parseNaturalLanguageShoppingInput(
       category: norm.category,
       quantity,
       unit,
+      ...(listStore ? { store: listStore } : {}),
     };
   });
 }

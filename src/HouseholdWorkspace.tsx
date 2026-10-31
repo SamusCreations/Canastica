@@ -728,6 +728,7 @@ export function HouseholdWorkspace({
       unit: string;
       isPredicted?: boolean;
       predictedReason?: string;
+      store?: string;
     }[]
   ) => {
     const createdAt = new Date().toISOString();
@@ -741,6 +742,7 @@ export function HouseholdWorkspace({
       isChecked: false,
       isPredicted: Boolean(it.isPredicted),
       predictedReason: it.predictedReason,
+      store: it.store,
       createdBy: currentMemberId,
       createdAt,
     }));
@@ -757,6 +759,14 @@ export function HouseholdWorkspace({
       checkedBy: !item.isChecked ? currentMemberId : undefined,
       checkedAt: !item.isChecked ? new Date().toISOString() : undefined,
     };
+    setShoppingList((prev) => prev.map((it) => (it.id === id ? updated : it)));
+    persist((client) => updateShoppingItems(client, [updated]));
+  };
+
+  const handleSetShoppingStore = (id: string, store: string | undefined) => {
+    const item = shoppingList.find((it) => it.id === id);
+    if (!item) return;
+    const updated: ShoppingListItem = { ...item, store: store?.trim() || undefined };
     setShoppingList((prev) => prev.map((it) => (it.id === id ? updated : it)));
     persist((client) => updateShoppingItems(client, [updated]));
   };
@@ -1282,10 +1292,12 @@ export function HouseholdWorkspace({
               <ShoppingListView
                 household={household}
                 items={shoppingList}
+                purchases={purchases}
                 predictions={predictions}
                 autoCrossOffSummary={autoCrossOffSummary}
                 onAddParsedItems={handleAddShoppingItems}
                 onToggleItem={handleToggleShoppingItem}
+                onSetStore={handleSetShoppingStore}
                 onDeleteItem={handleDeleteShoppingItem}
                 onClearChecked={handleClearChecked}
                 onUndoAutoCrossOff={handleUndoAutoCrossOff}
