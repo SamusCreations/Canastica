@@ -207,6 +207,7 @@ function mapShoppingItem(row: Row): ShoppingListItem {
     matchedReceiptItemName: orUndefined(row.matched_receipt_item_name),
     isPredicted: Boolean(row.is_predicted),
     predictedReason: orUndefined(row.predicted_reason),
+    store: orUndefined(row.store),
     createdBy: row.created_by,
     createdAt: row.created_at,
   };
@@ -722,6 +723,7 @@ export async function insertShoppingItems(
       is_checked: it.isChecked,
       is_predicted: it.isPredicted,
       predicted_reason: it.predictedReason ?? null,
+      store: it.store ?? null,
       created_by: it.createdBy,
       created_at: it.createdAt,
     }))
@@ -743,6 +745,7 @@ export async function updateShoppingItems(
           checked_at: it.checkedAt ?? null,
           matched_purchase_id: it.matchedPurchaseId ?? null,
           matched_receipt_item_name: it.matchedReceiptItemName ?? null,
+          store: it.store ?? null,
         })
         .eq('id', it.id);
       throwIfError(error, 'Actualizando lista');

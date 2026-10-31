@@ -120,6 +120,7 @@ export interface ShoppingListItem {
   matchedReceiptItemName?: string;
   isPredicted: boolean;
   predictedReason?: string;
+  store?: string;         // Where the user plans to buy it (supermarket name)
   createdBy: string;
   createdAt: string;
 }

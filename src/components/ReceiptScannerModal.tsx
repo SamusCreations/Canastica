@@ -588,9 +588,10 @@ export const ReceiptScannerModal: React.FC<ReceiptScannerModalProps> = ({
                     <Upload className="w-7 h-7" />
                   </div>
                   <h3 className="text-base font-bold mb-1">
-                    Arrastra y suelta la foto de tu factura, o tómala con la cámara
+                    <span className="sm:hidden">Sube o toma la foto de tu factura</span>
+                    <span className="hidden sm:inline">Arrastra y suelta la foto de tu factura, o tómala con la cámara</span>
                   </h3>
-                  <p className="text-xs text-[var(--text-muted)] max-w-md mb-6 leading-relaxed">
+                  <p className="hidden sm:block text-xs text-[var(--text-muted)] max-w-md mb-6 leading-relaxed">
                     Lectura automática de tiquetes de cualquier supermercado o pulpería: traduce códigos abreviados como{' '}
                     <code className="px-1.5 py-0.5 rounded bg-avocado-500/10 font-mono text-avocado-600 dark:text-avocado-400">
                       LCH DOS PIN 1L
@@ -1055,9 +1056,9 @@ export const ReceiptScannerModal: React.FC<ReceiptScannerModalProps> = ({
                   <div className="flex items-center justify-between">
                     <div>
                       <h4 className="text-sm font-bold">
-                        Ítems Extraídos y Normalizados ({draftItems.length})
+                        Productos ({draftItems.length})
                       </h4>
-                      <p className="text-[11px] text-[var(--text-muted)]">
+                      <p className="hidden sm:block text-[11px] text-[var(--text-muted)]">
                         Puedes editar nombres, categorías, cantidades o precios antes de guardar.
                       </p>
                     </div>
@@ -1145,18 +1146,20 @@ export const ReceiptScannerModal: React.FC<ReceiptScannerModalProps> = ({
                           </div>
                         </div>
 
-                        <div className="grid grid-cols-12 gap-2 items-center">
-                          <div className="col-span-12 sm:col-span-4">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          <label className="sm:col-span-2 flex flex-col gap-0.5">
+                            <span className="text-[10px] font-semibold text-[var(--text-muted)]">Producto</span>
                             <input
                               type="text"
                               value={item.normalizedName}
                               onChange={(e) =>
                                 handleUpdateDraftItem(item.id, 'normalizedName', e.target.value)
                               }
-                              className="liquid-input w-full px-2.5 py-1.5 rounded-lg text-xs font-semibold"
+                              className="liquid-input w-full px-2.5 py-2 rounded-lg text-sm font-semibold"
                             />
-                          </div>
-                          <div className="col-span-5 sm:col-span-3">
+                          </label>
+                          <label className="sm:col-span-2 flex flex-col gap-0.5">
+                            <span className="text-[10px] font-semibold text-[var(--text-muted)]">Categoría</span>
                             <select
                               value={item.category}
                               onChange={(e) =>
@@ -1166,7 +1169,7 @@ export const ReceiptScannerModal: React.FC<ReceiptScannerModalProps> = ({
                                   e.target.value as GroceryCategory
                                 )
                               }
-                              className="liquid-input w-full px-2 py-1.5 rounded-lg text-xs"
+                              className="liquid-input w-full px-2.5 py-2 rounded-lg text-sm"
                             >
                               {categories.map((cat) => (
                                 <option key={cat} value={cat}>
@@ -1174,11 +1177,13 @@ export const ReceiptScannerModal: React.FC<ReceiptScannerModalProps> = ({
                                 </option>
                               ))}
                             </select>
-                          </div>
-                          <div className="col-span-3 sm:col-span-2 flex gap-1">
+                          </label>
+                          <label className="flex flex-col gap-0.5">
+                            <span className="text-[10px] font-semibold text-[var(--text-muted)]">Cantidad</span>
                             <input
                               type="number"
                               step="any"
+                              inputMode="decimal"
                               value={item.quantity}
                               onChange={(e) =>
                                 handleUpdateDraftItem(
@@ -1187,21 +1192,26 @@ export const ReceiptScannerModal: React.FC<ReceiptScannerModalProps> = ({
                                   parseFloat(e.target.value) || 0
                                 )
                               }
-                              className="liquid-input w-1/2 px-2 py-1.5 rounded-lg text-xs text-center"
+                              className="liquid-input w-full px-2.5 py-2 rounded-lg text-sm"
                             />
+                          </label>
+                          <label className="flex flex-col gap-0.5">
+                            <span className="text-[10px] font-semibold text-[var(--text-muted)]">Unidad</span>
                             <input
                               type="text"
                               value={item.unit}
                               onChange={(e) =>
                                 handleUpdateDraftItem(item.id, 'unit', e.target.value)
                               }
-                              className="liquid-input w-1/2 px-1.5 py-1.5 rounded-lg text-xs text-center"
+                              className="liquid-input w-full px-2.5 py-2 rounded-lg text-sm"
                             />
-                          </div>
-                          <div className="col-span-2 sm:col-span-1">
+                          </label>
+                          <label className="flex flex-col gap-0.5">
+                            <span className="text-[10px] font-semibold text-[var(--text-muted)]">Precio unitario (₡)</span>
                             <input
                               type="number"
                               step="10"
+                              inputMode="decimal"
                               value={item.unitPrice}
                               onChange={(e) =>
                                 handleUpdateDraftItem(
@@ -1210,14 +1220,15 @@ export const ReceiptScannerModal: React.FC<ReceiptScannerModalProps> = ({
                                   parseFloat(e.target.value) || 0
                                 )
                               }
-                              className="liquid-input w-full px-1.5 py-1.5 rounded-lg text-xs text-right"
-                              title="Precio unitario (₡)"
+                              className="liquid-input w-full px-2.5 py-2 rounded-lg text-sm text-right"
                             />
-                          </div>
-                          <div className="col-span-2 sm:col-span-2">
+                          </label>
+                          <label className="flex flex-col gap-0.5">
+                            <span className="text-[10px] font-semibold text-[var(--text-muted)]">Total pagado (₡)</span>
                             <input
                               type="number"
                               step="10"
+                              inputMode="decimal"
                               value={item.totalPrice}
                               onChange={(e) =>
                                 handleUpdateDraftItem(
@@ -1226,10 +1237,10 @@ export const ReceiptScannerModal: React.FC<ReceiptScannerModalProps> = ({
                                   parseFloat(e.target.value) || 0
                                 )
                               }
-                              className="liquid-input w-full px-2 py-1.5 rounded-lg text-xs font-bold text-right text-emerald-600 dark:text-emerald-400"
+                              className="liquid-input w-full px-2.5 py-2 rounded-lg text-sm font-bold text-right text-emerald-600 dark:text-emerald-400"
                               title="Pagado por la línea, ya con la promoción (₡)"
                             />
-                          </div>
+                          </label>
                         </div>
 
                         {(item.discount > 0 || (item.reviewReasons?.length ?? 0) > 0) && (

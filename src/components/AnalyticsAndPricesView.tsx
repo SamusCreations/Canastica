@@ -654,7 +654,7 @@ export const AnalyticsAndPricesView: React.FC<AnalyticsAndPricesViewProps> = ({
                 <Plus className="w-4 h-4 text-avocado-600 dark:text-avocado-400" />
                 Registrar Nuevo Supermercado
               </h3>
-              <p className="text-xs text-[var(--text-muted)] mt-0.5">
+              <p className="hidden sm:block text-xs text-[var(--text-muted)] mt-0.5">
                 Añade pulperías, abastecedores de barrio, ferias del agricultor o carnicerías locales
               </p>
             </div>

@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   Clock,
   Loader2,
+  MapPin,
   Plus,
   RotateCcw,
   Sparkles,
@@ -18,10 +19,12 @@ import {
 } from '../services/geminiAndSupabaseService';
 import { askNotificationPermission, enqueueAiRequest, removeAiQueueEntry, withAiTimeout } from '../lib/aiQueue';
 import { useAiQuota } from '../lib/useAiQuota';
+import { buildStoreSuggestions, suggestedStoreFor } from '../lib/storeSuggestion';
 import {
   AutoCrossOffSummary,
   GroceryCategory,
   Household,
+  Purchase,
   RestockPrediction,
   ShoppingListItem,
 } from '../types/grocery';
@@ -32,6 +35,7 @@ interface ShoppingListViewProps {
   household: Household;
   householdId: string;
   items: ShoppingListItem[];
+  purchases: Purchase[];
   predictions: RestockPrediction[];
   autoCrossOffSummary: AutoCrossOffSummary | null;
   onAddParsedItems: (
@@ -43,9 +47,11 @@ interface ShoppingListViewProps {
       unit: string;
       isPredicted?: boolean;
       predictedReason?: string;
+      store?: string;
     }[]
   ) => void;
   onToggleItem: (id: string) => void;
+  onSetStore: (id: string, store: string | undefined) => void;
   onDeleteItem: (id: string) => void;
   onClearChecked: () => void;
   onUndoAutoCrossOff: () => void;
@@ -53,7 +59,7 @@ interface ShoppingListViewProps {
 }
 
 const EXAMPLE_NL_INPUTS = [
-  '2 litros de leche, pan integral y detergente',
+  '2 litros de leche, pan integral y detergente en Palí',
   '1.5 kg de pechuga de pollo, 1 kg de aguacate y 500g de café',
   '12 huevos, queso turrialba y 2 kg de arroz',
 ];
@@ -62,10 +68,12 @@ export const ShoppingListView: React.FC<ShoppingListViewProps> = ({
   household,
   householdId,
   items,
+  purchases,
   predictions,
   autoCrossOffSummary,
   onAddParsedItems,
   onToggleItem,
+  onSetStore,
   onDeleteItem,
   onClearChecked,
   onUndoAutoCrossOff,
@@ -168,16 +176,49 @@ export const ShoppingListView: React.FC<ShoppingListViewProps> = ({
     household.categories.map((c) => [c.name, c.color])
   );
 
-  const groupedByCategory = new Map<GroceryCategory, ShoppingListItem[]>();
+  // Group by place of purchase: the one the user chose, else the most common one in past receipts
+  const storeSuggestions = React.useMemo(() => buildStoreSuggestions(purchases), [purchases]);
+  const NO_STORE = '';
+  const effectiveStore = (item: ShoppingListItem) =>
+    item.store || suggestedStoreFor(storeSuggestions, item) || NO_STORE;
+
+  const groupedByStore = new Map<string, ShoppingListItem[]>();
   for (const item of pendingItems) {
-    const list = groupedByCategory.get(item.category) || [];
+    const store = effectiveStore(item);
+    const list = groupedByStore.get(store) || [];
     list.push(item);
-    groupedByCategory.set(item.category, list);
+    groupedByStore.set(store, list);
+  }
+  for (const list of groupedByStore.values()) {
+    list.sort(
+      (a, b) => (aisleOrderMap.get(a.category) || 99) - (aisleOrderMap.get(b.category) || 99)
+    );
   }
 
-  const sortedCategories = Array.from(groupedByCategory.keys()).sort(
-    (a, b) => (aisleOrderMap.get(a) || 99) - (aisleOrderMap.get(b) || 99)
-  );
+  // Stores with more items first; items without a place go last
+  const sortedStores = Array.from(groupedByStore.keys()).sort((a, b) => {
+    if (a === NO_STORE) return 1;
+    if (b === NO_STORE) return -1;
+    return (groupedByStore.get(b)?.length || 0) - (groupedByStore.get(a)?.length || 0);
+  });
+
+  const storeOptions = Array.from(
+    new Set([
+      ...household.supermarkets.map((st) => st.name),
+      ...items.map((it) => it.store).filter((st): st is string => Boolean(st)),
+      ...storeSuggestions.values(),
+    ])
+  ).sort((a, b) => a.localeCompare(b));
+  const storeColorMap = new Map(household.supermarkets.map((st) => [st.name, st.color]));
+
+  const handleStoreChange = (item: ShoppingListItem, value: string) => {
+    if (value === '__other__') {
+      const typed = window.prompt('¿Dónde lo vas a comprar?', item.store ?? '');
+      if (typed !== null) onSetStore(item.id, typed);
+      return;
+    }
+    onSetStore(item.id, value || undefined);
+  };
 
   const activeCanonicalSet = new Set(
     pendingItems.map((i) => (i.canonicalName || i.name).toLowerCase())
@@ -200,7 +241,7 @@ export const ShoppingListView: React.FC<ShoppingListViewProps> = ({
                 Agregar escribiendo
               </h2>
               <span className="text-[11px] text-[var(--text-muted)] hidden md:inline">
-                — Escribe varios productos y se separan y agrupan por pasillo
+                — Escribe varios productos y, si quieres, dónde comprarlos
               </span>
             </div>
           </div>
@@ -210,7 +251,8 @@ export const ShoppingListView: React.FC<ShoppingListViewProps> = ({
             className="liquid-glass-subtle liquid-glass-interactive px-3 py-1 rounded-lg text-xs font-bold text-avocado-600 dark:text-avocado-400 flex items-center gap-1.5"
           >
             <Sparkles className="w-3.5 h-3.5" />
-            Escanear Factura para Autotachar
+            <span className="sm:hidden">Escanear</span>
+            <span className="hidden sm:inline">Escanear factura para autotachar</span>
           </button>
         </div>
 
@@ -220,7 +262,7 @@ export const ShoppingListView: React.FC<ShoppingListViewProps> = ({
             value={nlInput}
             maxLength={MAX_SHOPPING_TEXT_CHARS}
             onChange={(e) => setNlInput(e.target.value)}
-            placeholder='Escribe ej.: "2 litros de leche, pan integral y detergente"...'
+            placeholder='Ej.: 2 L de leche, pan y detergente'
             className="liquid-input flex-1 px-3.5 py-2 rounded-lg text-xs sm:text-sm font-medium"
           />
           <button
@@ -278,7 +320,7 @@ export const ShoppingListView: React.FC<ShoppingListViewProps> = ({
           </p>
         )}
 
-        <div className="flex flex-wrap items-center gap-1.5">
+        <div className="hidden sm:flex flex-wrap items-center gap-1.5">
           <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]">
             Ejemplos:
           </span>
@@ -347,10 +389,11 @@ export const ShoppingListView: React.FC<ShoppingListViewProps> = ({
             <div className="flex items-center gap-1.5">
               <Sparkles className="w-3.5 h-3.5 text-amber-500" />
               <h3 className="text-[11px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400">
-                Sugerencias Inteligentes de Reposición (Historial)
+                <span className="sm:hidden">Sugerencias</span>
+                <span className="hidden sm:inline">Sugerencias de reposición (historial)</span>
               </h3>
             </div>
-            <span className="text-[10px] text-[var(--text-muted)]">1 clic para añadir</span>
+            <span className="hidden sm:inline text-[10px] text-[var(--text-muted)]">1 clic para añadir</span>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
             {smartSuggestions.slice(0, 4).map((sug) => (
@@ -393,36 +436,30 @@ export const ShoppingListView: React.FC<ShoppingListViewProps> = ({
         </div>
       )}
 
-      {/* Active Shopping List Grouped by Supermarket Aisle (4 Columns on Desktop for Zero Scroll) */}
+      {/* Active Shopping List Grouped by Place of Purchase */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-        {sortedCategories.map((category) => {
-          const catItems = groupedByCategory.get(category) || [];
-          const aisleNum = aisleOrderMap.get(category) || 1;
-          const color = categoryColorMap.get(category) || '#4f7f27';
+        {sortedStores.map((store) => {
+          const storeItems = groupedByStore.get(store) || [];
+          const color = storeColorMap.get(store) || (store ? '#4f7f27' : '#94a3b8');
 
           return (
-            <div key={category} className="liquid-glass rounded-xl p-3 space-y-2.5">
+            <div key={store || 'none'} className="liquid-glass rounded-xl p-3 space-y-2.5">
               <div className="flex items-center justify-between border-b border-[var(--glass-border)] pb-1.5">
                 <div className="flex items-center gap-1.5 min-w-0">
-                  <span
-                    className="w-2 h-2 rounded-full shrink-0"
-                    style={{ backgroundColor: color }}
-                  />
+                  <MapPin className="w-3.5 h-3.5 shrink-0" style={{ color }} />
                   <h3 className="text-xs font-bold truncate">
-                    {translateCategory(category, lang)}
+                    {store || (lang === 'en' ? 'No store yet' : 'Sin lugar definido')}
                   </h3>
-                  <span className="text-[9px] font-mono uppercase px-1.5 py-0.2 rounded bg-slate-500/10 text-[var(--text-muted)] shrink-0">
-                    Pasillo {aisleNum}
-                  </span>
                 </div>
                 <span className="text-[11px] font-bold text-[var(--text-muted)]">
-                  {catItems.length}
+                  {storeItems.length}
                 </span>
               </div>
 
               <div className="space-y-1.5">
-                {catItems.map((item) => {
+                {storeItems.map((item) => {
                   const creator = household.members.find((m) => m.id === item.createdBy);
+                  const suggested = item.store ? undefined : suggestedStoreFor(storeSuggestions, item);
                   return (
                     <div
                       key={item.id}
@@ -431,13 +468,18 @@ export const ShoppingListView: React.FC<ShoppingListViewProps> = ({
                       <div className="flex items-center gap-2 min-w-0">
                         <button
                           onClick={() => onToggleItem(item.id)}
-                          className="w-4 h-4 rounded border-2 border-avocado-500/60 hover:bg-avocado-500/20 flex items-center justify-center transition shrink-0"
+                          className="w-5 h-5 rounded border-2 border-avocado-500/60 hover:bg-avocado-500/20 flex items-center justify-center transition shrink-0"
                           aria-label={`Tachar ${item.name}`}
                         >
-                          <Check className="w-2.5 h-2.5 opacity-0 group-hover:opacity-60 text-avocado-600" />
+                          <Check className="w-3 h-3 opacity-0 group-hover:opacity-60 text-avocado-600" />
                         </button>
                         <div className="min-w-0">
                           <div className="flex items-center gap-1.5">
+                            <span
+                              className="w-1.5 h-1.5 rounded-full shrink-0"
+                              style={{ backgroundColor: categoryColorMap.get(item.category) || '#4f7f27' }}
+                              title={translateCategory(item.category, lang)}
+                            />
                             <span className="text-xs font-semibold truncate">{item.name}</span>
                             <span className="text-[10px] px-1 py-0.2 rounded bg-slate-500/10 font-mono shrink-0">
                               {item.quantity} {item.unit}
@@ -451,6 +493,25 @@ export const ShoppingListView: React.FC<ShoppingListViewProps> = ({
                               </span>
                             )}
                           </div>
+                          <label className="mt-0.5 flex items-center gap-1 text-[10px] text-[var(--text-muted)]">
+                            <MapPin className="w-2.5 h-2.5 shrink-0" />
+                            <select
+                              value={item.store ?? ''}
+                              onChange={(e) => handleStoreChange(item, e.target.value)}
+                              className="bg-transparent max-w-[9rem] truncate outline-none cursor-pointer"
+                              aria-label={`Lugar de compra de ${item.name}`}
+                            >
+                              <option value="">
+                                {suggested ? `${suggested} (más común)` : 'Elegir lugar…'}
+                              </option>
+                              {storeOptions.map((st) => (
+                                <option key={st} value={st}>
+                                  {st}
+                                </option>
+                              ))}
+                              <option value="__other__">Otro…</option>
+                            </select>
+                          </label>
                         </div>
                       </div>
 
@@ -461,6 +522,7 @@ export const ShoppingListView: React.FC<ShoppingListViewProps> = ({
                         <button
                           onClick={() => onDeleteItem(item.id)}
                           className="p-1 rounded opacity-50 hover:opacity-100 hover:bg-rose-500/15 text-rose-500 transition"
+                          aria-label={`Eliminar ${item.name}`}
                         >
                           <Trash2 className="w-3 h-3" />
                         </button>
