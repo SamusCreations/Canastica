@@ -68,7 +68,7 @@ export const RestockPredictionView: React.FC<RestockPredictionViewProps> = ({
                   Diario
                 </span>
               </div>
-              <p className="text-[11px] text-[var(--text-muted)]">
+              <p className="hidden sm:block text-[11px] text-[var(--text-muted)]">
                 Normalización a unidades base (ml, g, unid), tasa ponderada y ajuste a la última cantidad comprada
               </p>
             </div>
