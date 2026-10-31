@@ -141,7 +141,8 @@ export const ShoppingListView: React.FC<ShoppingListViewProps> = ({
             className="liquid-glass-subtle liquid-glass-interactive px-3 py-1 rounded-lg text-xs font-bold text-avocado-600 dark:text-avocado-400 flex items-center gap-1.5"
           >
             <Sparkles className="w-3.5 h-3.5" />
-            Escanear Factura para Autotachar
+            <span className="sm:hidden">Escanear</span>
+            <span className="hidden sm:inline">Escanear factura para autotachar</span>
           </button>
         </div>
 
@@ -151,7 +152,7 @@ export const ShoppingListView: React.FC<ShoppingListViewProps> = ({
             value={nlInput}
             maxLength={MAX_SHOPPING_TEXT_CHARS}
             onChange={(e) => setNlInput(e.target.value)}
-            placeholder='Escribe ej.: "2 litros de leche, pan integral y detergente"...'
+            placeholder='Ej.: 2 L de leche, pan y detergente'
             className="liquid-input flex-1 px-3.5 py-2 rounded-lg text-xs sm:text-sm font-medium"
           />
           <button
@@ -180,7 +181,7 @@ export const ShoppingListView: React.FC<ShoppingListViewProps> = ({
           </p>
         )}
 
-        <div className="flex flex-wrap items-center gap-1.5">
+        <div className="hidden sm:flex flex-wrap items-center gap-1.5">
           <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]">
             Ejemplos:
           </span>
@@ -249,10 +250,11 @@ export const ShoppingListView: React.FC<ShoppingListViewProps> = ({
             <div className="flex items-center gap-1.5">
               <Sparkles className="w-3.5 h-3.5 text-amber-500" />
               <h3 className="text-[11px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400">
-                Sugerencias Inteligentes de Reposición (Historial)
+                <span className="sm:hidden">Sugerencias</span>
+                <span className="hidden sm:inline">Sugerencias de reposición (historial)</span>
               </h3>
             </div>
-            <span className="text-[10px] text-[var(--text-muted)]">1 clic para añadir</span>
+            <span className="hidden sm:inline text-[10px] text-[var(--text-muted)]">1 clic para añadir</span>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
             {smartSuggestions.slice(0, 4).map((sug) => (

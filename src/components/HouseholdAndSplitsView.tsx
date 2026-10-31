@@ -349,7 +349,7 @@ export const HouseholdAndSplitsView: React.FC<HouseholdAndSplitsViewProps> = ({
                 <h3 className="text-xs font-bold uppercase tracking-wider text-avocado-600 dark:text-avocado-400">
                   Saldos Pendientes (“Quién le debe a quién”)
                 </h3>
-                <p className="text-[11px] text-[var(--text-muted)] mt-0.5">
+                <p className="hidden sm:block text-[11px] text-[var(--text-muted)] mt-0.5">
                   Transferencias óptimas sugeridas para saldar el mes
                 </p>
               </div>
@@ -396,7 +396,7 @@ export const HouseholdAndSplitsView: React.FC<HouseholdAndSplitsViewProps> = ({
                   <h3 className="text-xs font-bold uppercase tracking-wider">
                     Clasificar Ítems: Compartido vs. Personal
                   </h3>
-                  <p className="text-[11px] text-[var(--text-muted)]">
+                  <p className="hidden sm:block text-[11px] text-[var(--text-muted)]">
                     Haz clic en la etiqueta de cualquier producto para cambiar su división
                   </p>
                 </div>

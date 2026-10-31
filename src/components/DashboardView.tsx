@@ -509,7 +509,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <span className="text-sm font-bold">
               {lang === 'es' ? 'Escanea tu primera factura' : 'Scan your first receipt'}
             </span>
-            <span className="text-xs text-[var(--text-muted)] max-w-xs">
+            <span className="hidden sm:block text-xs text-[var(--text-muted)] max-w-xs">
               {lang === 'es'
                 ? 'Con cada compra la app aprende cuánto consumen en casa y te avisa antes de que algo se acabe.'
                 : 'Each purchase teaches the app how fast your home uses things.'}
