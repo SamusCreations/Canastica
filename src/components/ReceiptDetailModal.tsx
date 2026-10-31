@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { receiptFileKind } from '../utils/receiptFile';
 import { Calendar, Pencil, Store, Tag, Trash2, User, Users, X } from 'lucide-react';
 import { CurrencyCode, HouseholdMember, Purchase } from '../types/grocery';
 import { formatCurrency } from '../utils/formatters';
@@ -107,7 +108,16 @@ export const ReceiptDetailModal: React.FC<ReceiptDetailModalProps> = ({
             <span className="text-xs font-semibold text-[var(--text-secondary)] mb-2">
               Imagen Original de la Factura
             </span>
-            {purchase.receiptImageUrl ? (
+            {purchase.receiptImageUrl && receiptFileKind(purchase.receiptImageUrl) !== 'image' ? (
+              <a
+                href={purchase.receiptImageUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="py-10 text-xs font-semibold text-avocado-700 dark:text-avocado-300 underline"
+              >
+                {receiptFileKind(purchase.receiptImageUrl) === 'xml' ? 'Abrir factura electrónica (XML)' : 'Abrir factura en PDF'}
+              </a>
+            ) : purchase.receiptImageUrl ? (
               <img
                 src={purchase.receiptImageUrl}
                 alt={`Factura ${purchase.supermarket}`}

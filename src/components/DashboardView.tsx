@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { receiptFileKind } from '../utils/receiptFile';
 import {
   AlertCircle,
   ArrowUpRight,
@@ -539,11 +540,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
                   {/* Receipt Mini Thumbnail */}
                   <div className="w-9 h-11 rounded-md overflow-hidden border border-[var(--glass-border)] bg-white shrink-0 relative">
-                    <img
-                      src={purchase.receiptImageUrl}
-                      alt="Factura"
-                      className="w-full h-full object-cover object-top"
-                    />
+                    {receiptFileKind(purchase.receiptImageUrl) === 'image' ? (
+                      <img
+                        src={purchase.receiptImageUrl}
+                        alt="Factura"
+                        className="w-full h-full object-cover object-top"
+                      />
+                    ) : (
+                      <span className="w-full h-full flex items-center justify-center text-[8px] font-bold text-slate-600 uppercase">
+                        {receiptFileKind(purchase.receiptImageUrl)}
+                      </span>
+                    )}
                     <div className="absolute inset-0 bg-slate-900/35 opacity-0 group-hover:opacity-100 flex items-center justify-center transition">
                       <Eye className="w-3 h-3 text-white" />
                     </div>

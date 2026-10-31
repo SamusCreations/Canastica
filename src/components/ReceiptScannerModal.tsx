@@ -4,6 +4,7 @@ import {
   Camera,
   CheckCircle2,
   Clock,
+  FileText,
   FileWarning,
   Plus,
   RefreshCw,
@@ -46,6 +47,8 @@ import {
 import { formatCurrency, translateCategory } from '../utils/formatters';
 import { getTodayIso } from '../utils/dates';
 import { applyReceiptMemory, buildReceiptMemory } from '../lib/receiptMemory';
+import { isElectronicInvoiceFile, parseElectronicInvoiceXml } from '../lib/electronicInvoice';
+import { receiptFileKind } from '../utils/receiptFile';
 
 interface EditableDraftItem {
   id: string;
@@ -203,6 +206,29 @@ export const ReceiptScannerModal: React.FC<ReceiptScannerModalProps> = ({
   };
 
   const handleFileUpload = (file: File) => {
+    // Hacienda electronic invoice XML: read exactly, no AI needed
+    if (isElectronicInvoiceFile(file)) {
+      file.text().then((xml) => {
+        const parsed = parseElectronicInvoiceXml(xml);
+        if (!parsed) {
+          setBlurryAdvice('Este archivo XML no parece una factura electrónica. Sube el XML de la factura (no el de la respuesta de Hacienda), un PDF o una foto.');
+          setFailedImageUrl('');
+          setStep('blurry_error');
+          return;
+        }
+        const bytes = new TextEncoder().encode(xml);
+        let binary = '';
+        bytes.forEach((b) => (binary += String.fromCharCode(b)));
+        applyScanResult(parsed, `data:application/xml;base64,${btoa(binary)}`);
+      });
+      return;
+    }
+    if (!file.type.startsWith('image/') && file.type !== 'application/pdf') {
+      setBlurryAdvice('Ese tipo de archivo no se puede leer. Usa una foto, un PDF o el XML de la factura electrónica.');
+      setFailedImageUrl('');
+      setStep('blurry_error');
+      return;
+    }
     const reader = new FileReader();
     reader.onload = () => {
       const dataUrl = reader.result as string;
@@ -580,7 +606,7 @@ export const ReceiptScannerModal: React.FC<ReceiptScannerModalProps> = ({
                     <input
                       ref={fileInputRef}
                       type="file"
-                      accept="image/*"
+                      accept="image/*,application/pdf,.pdf,.xml,text/xml,application/xml"
                       className="hidden"
                       onChange={(e) => {
                         const f = e.target.files?.[0];
@@ -608,11 +634,10 @@ export const ReceiptScannerModal: React.FC<ReceiptScannerModalProps> = ({
                     </button>
                     <button
                       onClick={() => fileInputRef.current?.click()}
-                      disabled={!aiAvailable}
-                      className="liquid-glass liquid-glass-interactive px-5 py-2.5 rounded-xl text-xs font-semibold flex items-center gap-2 disabled:opacity-50"
+                      className="liquid-glass liquid-glass-interactive px-5 py-2.5 rounded-xl text-xs font-semibold flex items-center gap-2"
                     >
                       <Upload className="w-4 h-4 text-avocado-600 dark:text-avocado-400" />
-                      Subir Imagen
+                      Subir foto, PDF o XML
                     </button>
                     <button
                       onClick={handleEnterManually}
@@ -791,7 +816,18 @@ export const ReceiptScannerModal: React.FC<ReceiptScannerModalProps> = ({
                     </span>
                   </div>
                   <div className="w-full max-h-[410px] overflow-y-auto rounded-lg bg-slate-100 dark:bg-slate-900/60 p-2 flex justify-center">
-                    {receiptImageUrl ? (
+                    {receiptImageUrl && receiptFileKind(receiptImageUrl) !== 'image' ? (
+                      <a
+                        href={receiptImageUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        download={receiptFileKind(receiptImageUrl) === 'xml' ? 'factura.xml' : 'factura.pdf'}
+                        className="py-10 flex flex-col items-center gap-2 text-xs font-semibold text-avocado-700 dark:text-avocado-300"
+                      >
+                        <FileText className="w-10 h-10" />
+                        {receiptFileKind(receiptImageUrl) === 'xml' ? 'Factura electrónica (XML)' : 'Factura en PDF'}
+                      </a>
+                    ) : receiptImageUrl ? (
                       <img
                         src={receiptImageUrl}
                         alt="Factura escaneada"
