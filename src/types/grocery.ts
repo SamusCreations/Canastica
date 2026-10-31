@@ -138,6 +138,8 @@ export interface PantryItem {
   estimatedExpiryDate: string;
   status: 'available' | 'running_low' | 'ran_out';
   addedBy: string;
+  /** Added by checking off a shopping list item (same id); replaced when a receipt brings it */
+  fromShoppingList?: boolean;
 }
 
 export interface HistoricalIntervalPoint {

@@ -227,6 +227,7 @@ function mapPantryItem(row: Row): PantryItem {
     estimatedExpiryDate: String(row.estimated_expiry_date).slice(0, 10),
     status: row.status,
     addedBy: row.added_by,
+    fromShoppingList: Boolean(row.from_shopping_list),
   };
 }
 
@@ -774,9 +775,16 @@ export async function insertPantryItems(
       estimated_expiry_date: p.estimatedExpiryDate,
       status: p.status,
       added_by: p.addedBy,
+      from_shopping_list: Boolean(p.fromShoppingList),
     }))
   );
   throwIfError(error, 'Guardando despensa');
+}
+
+export async function deletePantryItems(sb: SupabaseClient, ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  const { error } = await sb.from('pantry_items').delete().in('id', ids);
+  throwIfError(error, 'Eliminando de la despensa');
 }
 
 export async function updatePantryItems(sb: SupabaseClient, items: PantryItem[]): Promise<void> {
