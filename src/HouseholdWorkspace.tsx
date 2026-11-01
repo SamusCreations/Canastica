@@ -1581,12 +1581,9 @@ export function HouseholdWorkspace({
                 }
                 onJoinHousehold={onJoinHousehold}
                 onCreateSupermarket={handleCreateSupermarket}
-                onToggleItemShared={(purchaseId, itemId) => {
-                  const target = purchases
-                    .find((p) => p.id === purchaseId)
-                    ?.items.find((it) => it.id === itemId);
-                  if (!target) return;
-                  const nextShared = !target.isShared;
+                onAssignItem={(purchaseId, itemId, assignee) => {
+                  const nextShared = assignee === 'shared';
+                  const assignedTo = nextShared ? undefined : assignee;
                   setPurchases((prev) =>
                     prev.map((p) =>
                       p.id !== purchaseId
@@ -1594,12 +1591,12 @@ export function HouseholdWorkspace({
                         : {
                             ...p,
                             items: p.items.map((it) =>
-                              it.id === itemId ? { ...it, isShared: nextShared } : it
+                              it.id === itemId ? { ...it, isShared: nextShared, assignedTo } : it
                             ),
                           }
                     )
                   );
-                  persist((client) => setPurchaseItemShared(client, itemId, nextShared));
+                  persist((client) => setPurchaseItemShared(client, itemId, nextShared, assignedTo));
                 }}
                 onRecordSettlement={(fromMemberId, toMemberId, amount) => {
                   const settlement: ExpenseSettlement = {
