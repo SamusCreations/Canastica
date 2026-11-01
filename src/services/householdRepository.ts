@@ -165,6 +165,7 @@ function mapPurchaseItem(row: Row, supermarket: string): PurchaseItem {
     unitPrice: num(row.unit_price),
     totalPrice: num(row.total_price),
     isShared: Boolean(row.is_shared),
+    assignedTo: orUndefined(row.assigned_to),
     createdBy: row.created_by,
     purchaseDate: String(row.purchase_date).slice(0, 10),
     supermarket,
@@ -618,6 +619,7 @@ export async function insertPurchase(
         unit_price: it.unitPrice,
         total_price: it.totalPrice,
         is_shared: it.isShared,
+        assigned_to: it.isShared ? null : it.assignedTo ?? null,
         created_by: it.createdBy,
         purchase_date: it.purchaseDate,
       }))
@@ -642,6 +644,7 @@ function purchaseItemRows(householdId: string, purchase: Purchase) {
     unit_price: it.unitPrice,
     total_price: it.totalPrice,
     is_shared: it.isShared,
+    assigned_to: it.isShared ? null : it.assignedTo ?? null,
     created_by: it.createdBy,
     purchase_date: it.purchaseDate,
   }));
@@ -697,9 +700,13 @@ export async function deletePurchase(
 export async function setPurchaseItemShared(
   sb: SupabaseClient,
   itemId: string,
-  isShared: boolean
+  isShared: boolean,
+  assignedTo?: string
 ): Promise<void> {
-  const { error } = await sb.from('purchase_items').update({ is_shared: isShared }).eq('id', itemId);
+  const { error } = await sb
+    .from('purchase_items')
+    .update({ is_shared: isShared, assigned_to: isShared ? null : assignedTo ?? null })
+    .eq('id', itemId);
   throwIfError(error, 'Actualizando producto');
 }
 

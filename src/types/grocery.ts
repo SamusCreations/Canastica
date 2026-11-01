@@ -84,6 +84,7 @@ export interface PurchaseItem {
   unitPrice: number;      // in CRC
   totalPrice: number;     // in CRC
   isShared: boolean;      // Shared vs. Personal item for Expense Splitting
+  assignedTo?: string;    // Member who owns a personal item (defaults to the payer)
   createdBy: string;      // Member ID
   purchaseDate: string;   // ISO Date YYYY-MM-DD
   supermarket: string;
