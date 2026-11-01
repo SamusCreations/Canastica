@@ -873,6 +873,40 @@ export async function syncRestockPredictions(
 // Settlements & notifications
 // ---------------------------------------------------------------------------
 
+export interface HouseholdActivityEntry {
+  id: string;
+  actorId: string | null;
+  entity: string;
+  action: string;
+  summary: string;
+  createdAt: string;
+}
+
+/** Latest household actions (written by database triggers). */
+export async function fetchHouseholdActivity(
+  sb: SupabaseClient,
+  householdId: string,
+  limit = 100
+): Promise<HouseholdActivityEntry[]> {
+  const { data, error } = await sb
+    .from('household_activity')
+    .select('id, actor_id, entity, action, summary, created_at')
+    .eq('household_id', householdId)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  throwIfError(error, 'Cargando historial');
+  return (data ?? []).map((row) => ({
+    id: row.id,
+    actorId: row.actor_id,
+    entity: row.entity,
+    action: row.action,
+    summary: row.summary,
+    createdAt: row.created_at,
+  }));
+}
+
+// ---------------------------------------------------------------------------
+
 export async function insertSettlement(
   sb: SupabaseClient,
   householdId: string,
