@@ -60,6 +60,7 @@ import {
   describeSupabaseError,
   HouseholdMembership,
   insertNotification,
+  deletePantryItems,
   insertPantryItems,
   insertPurchase,
   deletePurchase,
@@ -81,6 +82,7 @@ import {
 } from './services/householdRepository';
 import {
   AutoCrossOffSummary,
+  BaseUnit,
   CurrencyCode,
   ExpenseSettlement,
   GroceryCategory,
@@ -104,6 +106,58 @@ import { devLog } from './lib/devConsole';
 import { setReportScreenContext } from './lib/appContext';
 import { formatCurrency } from './utils/formatters';
 import { BrandMark } from './components/BrandLogo';
+
+// A list-originated pantry entry counts as the same product for this long after it was checked off
+const LIST_TO_RECEIPT_WINDOW_DAYS = 30;
+
+/** Pantry entry for a shopping list item the user checked off; shares the item's id. */
+function pantryEntryFromListItem(item: ShoppingListItem, memberId: string): PantryItem {
+  const norm = normalizeReceiptProduct(item.name);
+  const unit = item.unit.trim().toLowerCase();
+  let baseUnit: BaseUnit = norm.baseUnit;
+  let baseQuantity = item.quantity;
+  if (/^(l|lt|litros?)$/.test(unit)) [baseUnit, baseQuantity] = ['ml', item.quantity * 1000];
+  else if (unit === 'ml') baseUnit = 'ml';
+  else if (/^(kg|kilos?)$/.test(unit)) [baseUnit, baseQuantity] = ['g', item.quantity * 1000];
+  else if (/^(g|gramos?)$/.test(unit)) baseUnit = 'g';
+  else baseUnit = 'units';
+  const today = getTodayIso();
+  return {
+    id: item.id,
+    name: item.name,
+    canonicalName: item.canonicalName || norm.canonicalName,
+    category: item.category,
+    storageLocation: norm.storageLocation,
+    quantityLabel: `${item.quantity} ${item.unit}`,
+    baseQuantity,
+    baseUnit,
+    remainingPercentage: 100,
+    purchasedDate: today,
+    estimatedExpiryDate: getIsoDaysFromNow(norm.shelfLifeDays, today),
+    status: 'available',
+    addedBy: memberId,
+    fromShoppingList: true,
+  };
+}
+
+/** The list-originated pantry entry a receipt product should replace, if any. */
+function findListPantryEntry(
+  pantry: PantryItem[],
+  receiptEntry: PantryItem,
+  alreadyReplaced: Set<string>
+): PantryItem | undefined {
+  const names = new Set(
+    [receiptEntry.canonicalName, receiptEntry.name].map((n) => n.trim().toLowerCase()).filter(Boolean)
+  );
+  const oldest = getIsoDaysFromNow(-LIST_TO_RECEIPT_WINDOW_DAYS, receiptEntry.purchasedDate);
+  return pantry.find(
+    (p) =>
+      p.fromShoppingList &&
+      !alreadyReplaced.has(p.id) &&
+      p.purchasedDate >= oldest &&
+      (names.has(p.canonicalName.trim().toLowerCase()) || names.has(p.name.trim().toLowerCase()))
+  );
+}
 
 const DEMO_STATE_STORAGE_KEY = 'glasscart_household_state_crc_v2';
 const PREFS_STORAGE_KEY = 'glasscart_view_prefs_v1';
@@ -631,7 +685,16 @@ export function HouseholdWorkspace({
         addedBy: newPurchase.createdBy,
       };
     });
-    setPantry((prev) => [...newPantryEntries, ...prev]);
+    // Products already in the pantry because they were checked off the list are replaced, not duplicated
+    const replacedPantryIds = new Set<string>();
+    for (const entry of newPantryEntries) {
+      const previous = findListPantryEntry(pantry, entry, replacedPantryIds);
+      if (!previous) continue;
+      replacedPantryIds.add(previous.id);
+      entry.remainingPercentage = previous.remainingPercentage;
+      entry.status = previous.status;
+    }
+    setPantry((prev) => [...newPantryEntries, ...prev.filter((p) => !replacedPantryIds.has(p.id))]);
 
     const matches = matchPurchasedItemsToShoppingList(shoppingList, newPurchase.items);
     const matchedIdMap = new Map(
@@ -675,6 +738,7 @@ export function HouseholdWorkspace({
     // Order matters: list items reference the purchase through a foreign key
     persist(async (client) => {
       await insertPurchase(client, householdId, newPurchase);
+      await deletePantryItems(client, [...replacedPantryIds]);
       await insertPantryItems(client, householdId, newPantryEntries);
       await updateShoppingItems(client, crossedOff);
       if (crossOffNotification) await insertNotification(client, householdId, crossOffNotification);
@@ -775,6 +839,26 @@ export function HouseholdWorkspace({
       checkedAt: !item.isChecked ? new Date().toISOString() : undefined,
     };
     setShoppingList((prev) => prev.map((it) => (it.id === id ? updated : it)));
+
+    // Checking an item off puts it in the pantry (same id, so unchecking can take it back out)
+    const linkedPantry = pantry.find((p) => p.id === id && p.fromShoppingList);
+    if (updated.isChecked && !pantry.some((p) => p.id === id)) {
+      const entry = pantryEntryFromListItem(updated, currentMemberId);
+      setPantry((prev) => [entry, ...prev]);
+      persist(async (client) => {
+        await updateShoppingItems(client, [updated]);
+        await insertPantryItems(client, householdId, [entry]);
+      });
+      return;
+    }
+    if (!updated.isChecked && linkedPantry) {
+      setPantry((prev) => prev.filter((p) => p.id !== id));
+      persist(async (client) => {
+        await updateShoppingItems(client, [updated]);
+        await deletePantryItems(client, [id]);
+      });
+      return;
+    }
     persist((client) => updateShoppingItems(client, [updated]));
   };
 
