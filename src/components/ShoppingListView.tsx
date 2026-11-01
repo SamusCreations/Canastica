@@ -436,8 +436,8 @@ export const ShoppingListView: React.FC<ShoppingListViewProps> = ({
         </div>
       )}
 
-      {/* Active Shopping List Grouped by Place of Purchase */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+      {/* Active Shopping List Grouped by Place of Purchase: groups stretch to fill the row */}
+      <div className="grid grid-cols-1 md:grid-cols-[repeat(auto-fit,minmax(320px,1fr))] gap-3">
         {sortedStores.map((store) => {
           const storeItems = groupedByStore.get(store) || [];
           const color = storeColorMap.get(store) || (store ? '#4f7f27' : '#94a3b8');

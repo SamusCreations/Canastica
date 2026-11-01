@@ -7,7 +7,8 @@ import { getReportScreenContext } from '../lib/appContext';
 // The panel is only downloaded for developer accounts
 const DevConsolePanel = lazy(() => import('./DevConsolePanel'));
 
-const FAB_POSITION = 'fixed z-[90] left-3 bottom-[calc(env(safe-area-inset-bottom)+84px)] sm:bottom-4';
+// Bottom left on mobile (clear of the tab bar), bottom right on desktop
+const FAB_POSITION = 'fixed z-[90] left-3 lg:left-auto lg:right-4 bottom-[calc(env(safe-area-inset-bottom)+84px)] sm:bottom-4';
 
 /**
  * Floating button that is always visible: opens "Reportar un problema".
@@ -28,7 +29,7 @@ export function DevConsoleRoot() {
   return (
     <>
       {!consoleOpen && !reportOpen && (
-        <div className={`${FAB_POSITION} flex flex-col-reverse items-start gap-2`}>
+        <div className={`${FAB_POSITION} flex flex-col-reverse items-start lg:items-end gap-2`}>
           <button
             onClick={developer ? () => setMenuOpen((v) => !v) : report}
             aria-label={en ? 'Report a problem' : 'Reportar un problema'}
