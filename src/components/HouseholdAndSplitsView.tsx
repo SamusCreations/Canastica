@@ -27,6 +27,7 @@ import {
 import { formatCurrency } from '../utils/formatters';
 import { getCurrentMonthPrefix } from '../utils/dates';
 import { Avatar } from './Avatar';
+import { SettleSheet, type SettleDetails } from './SettleSheet';
 
 interface HouseholdAndSplitsViewProps {
   mode?: 'demo' | 'cloud';
@@ -41,7 +42,7 @@ interface HouseholdAndSplitsViewProps {
   onJoinHousehold?: (inviteCode: string) => Promise<string | null>;
   onCreateSupermarket: (store: Omit<SupermarketStore, 'id'>) => void;
   onToggleItemShared: (purchaseId: string, itemId: string) => void;
-  onRecordSettlement: (fromMemberId: string, toMemberId: string, amount: number) => void;
+  onRecordSettlement: (fromMemberId: string, toMemberId: string, amount: number, details: SettleDetails) => void;
 }
 
 export const HouseholdAndSplitsView: React.FC<HouseholdAndSplitsViewProps> = ({
@@ -144,6 +145,8 @@ export const HouseholdAndSplitsView: React.FC<HouseholdAndSplitsViewProps> = ({
     toName: string;
     amount: number;
   }[] = [];
+
+  const [settling, setSettling] = useState<(typeof suggestedTransfers)[number] | null>(null);
 
   const dCopy = debtors.map((d) => ({ ...d, rem: Math.abs(d.balance) }));
   const cCopy = creditors.map((c) => ({ ...c, rem: c.balance }));
@@ -378,14 +381,27 @@ export const HouseholdAndSplitsView: React.FC<HouseholdAndSplitsViewProps> = ({
                         </span>
                       </div>
                       <button
-                        onClick={() => onRecordSettlement(tr.fromId, tr.toId, tr.amount)}
+                        onClick={() => setSettling(tr)}
                         className="px-2.5 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-700 dark:text-emerald-300 text-[11px] font-bold transition shrink-0"
                       >
-                        Liquidar (SINPE)
+                        Liquidar
                       </button>
                     </div>
                   ))}
                 </div>
+              )}
+              {settling && (
+                <SettleSheet
+                  fromName={settling.fromName}
+                  toName={settling.toName}
+                  amount={settling.amount}
+                  currency={cur}
+                  onCancel={() => setSettling(null)}
+                  onConfirm={(details) => {
+                    onRecordSettlement(settling.fromId, settling.toId, settling.amount, details);
+                    setSettling(null);
+                  }}
+                />
               )}
             </div>
 

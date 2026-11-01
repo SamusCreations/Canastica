@@ -7,6 +7,7 @@
 // - dev-status (configuration and a Gemini ping, only for DEVELOPER_EMAILS)
 // - report-bug (saves a user's problem report and emails it to the admin; no AI, no quota)
 // - list-bug-reports (latest reports, only for DEVELOPER_EMAILS)
+// - notify-settlement (emails the payee that a debt was settled, with the optional proof; no AI, no quota)
 // Every AI action consumes one unit of the user's daily quota (AI_DAILY_LIMIT, default 5).
 // ============================================================================
 
@@ -351,6 +352,93 @@ function reportRecipient(): string | null {
   if (explicit) return explicit;
   const first = (Deno.env.get("DEVELOPER_EMAILS") ?? "").split(",").map((e) => e.trim()).find(Boolean);
   return first ?? null;
+}
+
+const CRC = new Intl.NumberFormat("es-CR", { style: "currency", currency: "CRC", maximumFractionDigits: 0 });
+
+/**
+ * Emails the payee of a settlement. The caller must be a member of its household:
+ * the settlement is read with the caller's own client, so RLS checks that.
+ */
+async function notifySettlement(
+  user: User,
+  userClient: SupabaseClient,
+  payload: Record<string, unknown>
+): Promise<{ emailStatus: "sent" | "already_sent" | "not_configured" | "no_email" | "failed"; detail?: string }> {
+  const settlementId = typeof payload.settlementId === "string" ? payload.settlementId : "";
+  if (!/^[0-9a-f-]{36}$/i.test(settlementId)) throw new PublicError("bad_request", 400, "bad settlement id");
+
+  const { data: settlement, error } = await userClient
+    .from("expense_settlements")
+    .select("id, household_id, from_member_id, to_member_id, amount, note, settled_at, evidence_path, notified_at")
+    .eq("id", settlementId)
+    .maybeSingle();
+  if (error) throw new Error(`settlement read: ${error.message}`);
+  if (!settlement) throw new PublicError("bad_request", 404, "settlement not found or not a member");
+  if (settlement.notified_at) return { emailStatus: "already_sent" };
+
+  const admin = serviceClient();
+  if (!admin) throw new Error("SUPABASE_SERVICE_ROLE_KEY is not available");
+  const resendKey = Deno.env.get("RESEND_API_KEY");
+  if (!resendKey) return { emailStatus: "not_configured", detail: "RESEND_API_KEY missing" };
+
+  const [{ data: people }, { data: household }] = await Promise.all([
+    admin.from("profiles").select("id, full_name, email").in("id", [settlement.from_member_id, settlement.to_member_id]),
+    admin.from("households").select("name").eq("id", settlement.household_id).maybeSingle(),
+  ]);
+  const payer = people?.find((p) => p.id === settlement.from_member_id);
+  const payee = people?.find((p) => p.id === settlement.to_member_id);
+  if (!payee?.email) return { emailStatus: "no_email" };
+
+  let evidenceUrl: string | null = null;
+  if (settlement.evidence_path) {
+    const { data: signed } = await admin.storage
+      .from("settlement-evidence")
+      .createSignedUrl(settlement.evidence_path, 60 * 60 * 24 * 7);
+    evidenceUrl = signed?.signedUrl ?? null;
+  }
+
+  const payerName = payer?.full_name || "Un miembro del hogar";
+  const amount = CRC.format(Number(settlement.amount));
+  const householdName = household?.name || "tu hogar";
+  const date = new Date(settlement.settled_at).toLocaleDateString("es-CR", { dateStyle: "long", timeZone: "America/Costa_Rica" });
+  const html = `<div style="font-family:Arial,sans-serif;font-size:15px;color:#111;max-width:560px">
+<h2 style="margin:0 0 8px;color:#4f7f27">Te liquidaron ${escapeHtml(amount)}</h2>
+<p>${escapeHtml(payerName)} registró en Canastica que te pagó <strong>${escapeHtml(amount)}</strong> de los gastos de <strong>${escapeHtml(householdName)}</strong> el ${escapeHtml(date)}.</p>
+${settlement.note ? `<p style="background:#f4f6f8;border-radius:8px;padding:12px;white-space:pre-wrap">${escapeHtml(settlement.note)}</p>` : ""}
+${evidenceUrl ? `<p><a href="${escapeHtml(evidenceUrl)}" style="color:#4f7f27;font-weight:bold">Ver comprobante</a> (el enlace vence en 7 días)</p>` : "<p>No se adjuntó comprobante.</p>"}
+<p style="color:#666;font-size:12px">Si no reconoces este pago, avísale a ${escapeHtml(payerName)}.</p>
+</div>`;
+  const text = [
+    `${payerName} registró en Canastica que te pagó ${amount} de los gastos de ${householdName} el ${date}.`,
+    settlement.note ? `Nota: ${settlement.note}` : "",
+    evidenceUrl ? `Comprobante (vence en 7 días): ${evidenceUrl}` : "No se adjuntó comprobante.",
+  ].filter(Boolean).join("
+
+");
+
+  const emailRes = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    signal: AbortSignal.timeout(15_000),
+    headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      from: Deno.env.get("REPORT_FROM") || "Canastica <onboarding@resend.dev>",
+      to: [payee.email],
+      ...(payer?.email || user.email ? { reply_to: payer?.email || user.email } : {}),
+      subject: `[Canastica] ${payerName} te liquidó ${amount}`.slice(0, 200),
+      html,
+      text,
+    }),
+  }).catch((err) => err as Error);
+
+  if (emailRes instanceof Error || !emailRes.ok) {
+    const detail =
+      emailRes instanceof Error ? String(emailRes) : `Resend ${emailRes.status}: ${(await emailRes.text().catch(() => "")).slice(0, 300)}`;
+    console.error("assistant: settlement email failed:", settlementId, detail);
+    return { emailStatus: "failed", detail };
+  }
+  await admin.from("expense_settlements").update({ notified_at: new Date().toISOString() }).eq("id", settlementId);
+  return { emailStatus: "sent" };
 }
 
 function serviceClient(): SupabaseClient | null {
@@ -707,6 +795,15 @@ serve(async (req: Request) => {
           reportId: result.reportId,
           ...(developer ? { debug: { action, ...result, totalMs: Date.now() - requestStart } } : {}),
         },
+        200,
+        corsHeaders
+      );
+    }
+
+    if (action === "notify-settlement") {
+      const result = await notifySettlement(user, userClient, payload);
+      return json(
+        { ok: true, emailStatus: result.emailStatus, ...(developer ? { debug: { action, ...result } } : {}) },
         200,
         corsHeaders
       );
