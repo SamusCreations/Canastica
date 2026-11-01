@@ -43,6 +43,7 @@ import {
 import { calculateRestockPredictions, normalizeReceiptProduct } from './lib/restockEngine';
 import {
   matchPurchasedItemsToShoppingList,
+  notifySettlementByEmail,
   parseShoppingInputLocally,
   parseShoppingInputWithAI,
   scanReceiptImageWithAI,
@@ -66,6 +67,7 @@ import {
   deletePurchase,
   updatePurchase,
   insertSettlement,
+  uploadSettlementEvidence,
   insertShoppingItems,
   deleteShoppingItems,
   loadHouseholdSnapshot,
@@ -1598,17 +1600,29 @@ export function HouseholdWorkspace({
                   );
                   persist((client) => setPurchaseItemShared(client, itemId, nextShared, assignedTo));
                 }}
-                onRecordSettlement={(fromMemberId, toMemberId, amount) => {
+                onRecordSettlement={(fromMemberId, toMemberId, amount, details) => {
                   const settlement: ExpenseSettlement = {
                     id: newId(),
                     fromMemberId,
                     toMemberId,
                     amount,
-                    note: 'Liquidación registrada en Canastica',
+                    note: details.note || 'Liquidación registrada en Canastica',
                     settledAt: new Date().toISOString(),
                   };
                   setSettlements((prev) => [settlement, ...prev]);
-                  persist((client) => insertSettlement(client, householdId, settlement));
+                  persist(async (client) => {
+                    const evidencePath = details.evidence
+                      ? await uploadSettlementEvidence(client, householdId, settlement.id, details.evidence)
+                      : undefined;
+                    await insertSettlement(client, householdId, { ...settlement, evidencePath });
+                    if (evidencePath) {
+                      setSettlements((prev) =>
+                        prev.map((s) => (s.id === settlement.id ? { ...s, evidencePath } : s))
+                      );
+                    }
+                    void notifySettlementByEmail(settlement.id);
+                  });
+                  if (isCloud) showToast('Liquidación registrada. Le avisaremos por correo.', 'success');
                 }}
               />
             )}

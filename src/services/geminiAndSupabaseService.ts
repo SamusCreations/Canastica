@@ -129,6 +129,18 @@ export async function refreshAiQuota(): Promise<void> {
   if (data?.quota) setAiQuota(data.quota);
 }
 
+/** Emails the payee of a settlement (once). Failures are only logged: the settlement is already saved. */
+export async function notifySettlementByEmail(settlementId: string): Promise<void> {
+  const client = getSupabaseClient();
+  if (!client) return;
+  const { data, error } = await client.functions
+    .invoke(AI_FUNCTION_NAME, { body: { action: 'notify-settlement', payload: { settlementId } } })
+    .catch((err) => ({ data: null, error: err as Error }));
+  if (error || data?.emailStatus !== 'sent') {
+    devLog('warn', 'Liquidación', `Correo al receptor: ${data?.emailStatus ?? error?.name ?? 'error'}`, { detail: data?.debug });
+  }
+}
+
 /** Asks the server whether this account is a developer; only then is the dev console enabled. */
 export async function loadDevStatus(): Promise<DevStatus> {
   const client = getSupabaseClient();

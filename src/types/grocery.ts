@@ -204,6 +204,7 @@ export interface ExpenseSettlement {
   amount: number; // in CRC
   note: string;
   settledAt: string;
+  evidencePath?: string; // Proof of payment in the private settlement-evidence bucket
 }
 
 export interface HouseholdNotification {
