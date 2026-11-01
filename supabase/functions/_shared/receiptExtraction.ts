@@ -79,11 +79,12 @@ const CATEGORIES =
 export function buildScanReceiptPrompt(language: 'es' | 'en' = 'es'): string {
   const nameLang = language === 'en' ? 'English' : 'Spanish (Costa Rica)';
   return `You are the receipt reader of Canastica, a grocery app for households in Costa Rica.
-Read the supermarket receipt in the image and return JSON that follows the response schema exactly.
+Read the supermarket receipt in the image (or PDF) and return JSON that follows the response schema exactly.
 
-STEP -1: If the image is NOT a purchase receipt or ticket (a selfie, a document, a screenshot, a random photo),
+STEP -1: If the file is NOT a purchase receipt or ticket (a selfie, an unrelated document, a random photo),
 return { "isReceipt": false, "isBlurry": true, "items": [] } and stop. Never invent receipt data.
-Otherwise set "isReceipt": true.
+Otherwise set "isReceipt": true. A PDF or screenshot of an electronic invoice ("Factura Electrónica",
+"Tiquete Electrónico", an e-mailed invoice) IS a receipt: read its detail table the same way.
 
 STEP 0: If the image is too blurry, dark, cut off or unreadable to extract the items reliably, return
 { "isBlurry": true, "blurryAdvice": "<short friendly tip in ${nameLang} on how to retake the photo>", "items": [] } and stop.

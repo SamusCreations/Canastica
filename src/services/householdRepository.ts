@@ -552,7 +552,15 @@ async function uploadReceiptImage(
   try {
     const blob = await compressImage(await dataUrlToBlob(imageUrl));
     const ext =
-      blob.type === 'image/svg+xml' ? 'svg' : blob.type === 'image/png' ? 'png' : 'jpg';
+      blob.type === 'image/svg+xml'
+        ? 'svg'
+        : blob.type === 'image/png'
+          ? 'png'
+          : blob.type === 'application/pdf'
+            ? 'pdf'
+            : /xml/.test(blob.type)
+              ? 'xml'
+              : 'jpg';
     const path = `${householdId}/${purchaseId}.${ext}`;
     const { error } = await sb.storage
       .from(RECEIPTS_BUCKET)

@@ -224,6 +224,8 @@ export type ScannedReceiptItem = Omit<ExtractedReceiptItem, 'category' | 'baseUn
 
 export type ScannedReceiptResult = Omit<ExtractedReceipt, 'items' | 'blurryAdvice'> & {
   blurryAdvice?: string;
+  /** The AI could not be reached (busy, quota, offline): worth queueing instead of retaking the photo */
+  aiUnavailable?: boolean;
   items: ScannedReceiptItem[];
 };
 
@@ -264,6 +266,7 @@ export async function scanReceiptImageWithAI(
   if (!hasAiQuotaLeft()) {
     return {
       isBlurry: true,
+      aiUnavailable: true,
       blurryAdvice: describeAiQuota(aiQuota),
       supermarket: '',
       purchaseDate: getTodayIso(),
@@ -314,6 +317,7 @@ export async function scanReceiptImageWithAI(
 
   return {
     isBlurry: true,
+    aiUnavailable: true,
     blurryAdvice: getLastGeminiError() ?? AI_GENERIC_MESSAGE,
     supermarket: '',
     purchaseDate: getTodayIso(),
@@ -341,22 +345,32 @@ export async function parseNaturalLanguageShoppingInput(
   rawInput: string,
   language: 'es' | 'en' = 'es'
 ): Promise<ParsedShoppingInputItem[]> {
+  const aiItems = await parseShoppingInputWithAI(rawInput, language);
+  return aiItems && aiItems.length > 0 ? aiItems : parseShoppingInputLocally(rawInput);
+}
+
+/** Items read by the AI, or null when the AI could not be reached (busy, quota, offline). */
+export async function parseShoppingInputWithAI(
+  rawInput: string,
+  language: 'es' | 'en' = 'es'
+): Promise<ParsedShoppingInputItem[] | null> {
   const trimmed = rawInput.trim().slice(0, MAX_SHOPPING_TEXT_CHARS);
   if (!trimmed) return [];
+  if (!hasAiQuotaLeft()) return null;
+  const aiParsed = await invokeGeminiJSON<{ items?: ParsedShoppingInputItem[] }>('parse-shopping-input', {
+    text: trimmed,
+    language,
+  });
+  if (!aiParsed) return getSupabaseClient() ? null : [];
+  return (aiParsed.items ?? [])
+    .filter((it) => VALID_CATEGORIES.includes(it.category))
+    .map((it) => ({ ...it, store: it.store?.trim() || undefined }));
+}
 
-  // Without quota left, the simple local splitter below still works
-  if (hasAiQuotaLeft()) {
-    const aiParsed = await invokeGeminiJSON<{ items?: ParsedShoppingInputItem[] }>('parse-shopping-input', {
-      text: trimmed,
-      language,
-    });
-    const items = aiParsed?.items
-      ?.filter((it) => VALID_CATEGORIES.includes(it.category))
-      .map((it) => ({ ...it, store: it.store?.trim() || undefined }));
-    if (items && items.length > 0) {
-      return items;
-    }
-  }
+/** Simple splitter by commas and "y", used without AI. */
+export function parseShoppingInputLocally(rawInput: string): ParsedShoppingInputItem[] {
+  const trimmed = rawInput.trim().slice(0, MAX_SHOPPING_TEXT_CHARS);
+  if (!trimmed) return [];
 
   // "…, pan y detergente en Palí": a capitalized place at the end applies to the whole list
   const storeMatch = trimmed.match(/\s+(?:en|del|de la|at)\s+(?:el\s+|la\s+)?([A-ZÁÉÍÓÚÑ][\wÁÉÍÓÚÑáéíóúñ'&. -]{1,30})$/);

@@ -737,6 +737,10 @@ serve(async (req: Request) => {
       if (image.length > MAX_IMAGE_BASE64_CHARS) {
         throw new PublicError("too_large", 413, `image base64 length ${image.length}`);
       }
+      const mime = typeof payload.mimeType === "string" ? payload.mimeType : "image/jpeg";
+      if (!/^image\/(jpeg|png|webp|heic|heif)$/.test(mime) && mime !== "application/pdf") {
+        throw new PublicError("bad_request", 400, `unsupported file type ${mime}`);
+      }
     } else {
       const text = typeof payload.text === "string" ? payload.text.trim() : "";
       if (!text || text.length > MAX_SHOPPING_TEXT_CHARS) {
