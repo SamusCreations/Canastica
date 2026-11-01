@@ -43,6 +43,7 @@ import {
 import { calculateRestockPredictions, normalizeReceiptProduct } from './lib/restockEngine';
 import {
   matchPurchasedItemsToShoppingList,
+  notifySettlementByEmail,
   parseShoppingInputLocally,
   parseShoppingInputWithAI,
   scanReceiptImageWithAI,
@@ -67,6 +68,7 @@ import {
   updatePurchase,
   insertSettlement,
   fetchHouseholdActivity,
+  uploadSettlementEvidence,
   insertShoppingItems,
   deleteShoppingItems,
   loadHouseholdSnapshot,
@@ -1588,12 +1590,9 @@ export function HouseholdWorkspace({
                 }
                 onJoinHousehold={onJoinHousehold}
                 onCreateSupermarket={handleCreateSupermarket}
-                onToggleItemShared={(purchaseId, itemId) => {
-                  const target = purchases
-                    .find((p) => p.id === purchaseId)
-                    ?.items.find((it) => it.id === itemId);
-                  if (!target) return;
-                  const nextShared = !target.isShared;
+                onAssignItem={(purchaseId, itemId, assignee) => {
+                  const nextShared = assignee === 'shared';
+                  const assignedTo = nextShared ? undefined : assignee;
                   setPurchases((prev) =>
                     prev.map((p) =>
                       p.id !== purchaseId
@@ -1601,24 +1600,36 @@ export function HouseholdWorkspace({
                         : {
                             ...p,
                             items: p.items.map((it) =>
-                              it.id === itemId ? { ...it, isShared: nextShared } : it
+                              it.id === itemId ? { ...it, isShared: nextShared, assignedTo } : it
                             ),
                           }
                     )
                   );
-                  persist((client) => setPurchaseItemShared(client, itemId, nextShared));
+                  persist((client) => setPurchaseItemShared(client, itemId, nextShared, assignedTo));
                 }}
-                onRecordSettlement={(fromMemberId, toMemberId, amount) => {
+                onRecordSettlement={(fromMemberId, toMemberId, amount, details) => {
                   const settlement: ExpenseSettlement = {
                     id: newId(),
                     fromMemberId,
                     toMemberId,
                     amount,
-                    note: 'Liquidación registrada en Canastica',
+                    note: details.note || 'Liquidación registrada en Canastica',
                     settledAt: new Date().toISOString(),
                   };
                   setSettlements((prev) => [settlement, ...prev]);
-                  persist((client) => insertSettlement(client, householdId, settlement));
+                  persist(async (client) => {
+                    const evidencePath = details.evidence
+                      ? await uploadSettlementEvidence(client, householdId, settlement.id, details.evidence)
+                      : undefined;
+                    await insertSettlement(client, householdId, { ...settlement, evidencePath });
+                    if (evidencePath) {
+                      setSettlements((prev) =>
+                        prev.map((s) => (s.id === settlement.id ? { ...s, evidencePath } : s))
+                      );
+                    }
+                    void notifySettlementByEmail(settlement.id);
+                  });
+                  if (isCloud) showToast('Liquidación registrada. Le avisaremos por correo.', 'success');
                 }}
               />
             )}

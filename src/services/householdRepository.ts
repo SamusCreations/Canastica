@@ -165,6 +165,7 @@ function mapPurchaseItem(row: Row, supermarket: string): PurchaseItem {
     unitPrice: num(row.unit_price),
     totalPrice: num(row.total_price),
     isShared: Boolean(row.is_shared),
+    assignedTo: orUndefined(row.assigned_to),
     createdBy: row.created_by,
     purchaseDate: String(row.purchase_date).slice(0, 10),
     supermarket,
@@ -240,6 +241,7 @@ function mapSettlement(row: Row): ExpenseSettlement {
     amount: num(row.amount),
     note: row.note ?? '',
     settledAt: row.settled_at,
+    evidencePath: orUndefined(row.evidence_path),
   };
 }
 
@@ -617,6 +619,7 @@ export async function insertPurchase(
         unit_price: it.unitPrice,
         total_price: it.totalPrice,
         is_shared: it.isShared,
+        assigned_to: it.isShared ? null : it.assignedTo ?? null,
         created_by: it.createdBy,
         purchase_date: it.purchaseDate,
       }))
@@ -641,6 +644,7 @@ function purchaseItemRows(householdId: string, purchase: Purchase) {
     unit_price: it.unitPrice,
     total_price: it.totalPrice,
     is_shared: it.isShared,
+    assigned_to: it.isShared ? null : it.assignedTo ?? null,
     created_by: it.createdBy,
     purchase_date: it.purchaseDate,
   }));
@@ -696,9 +700,13 @@ export async function deletePurchase(
 export async function setPurchaseItemShared(
   sb: SupabaseClient,
   itemId: string,
-  isShared: boolean
+  isShared: boolean,
+  assignedTo?: string
 ): Promise<void> {
-  const { error } = await sb.from('purchase_items').update({ is_shared: isShared }).eq('id', itemId);
+  const { error } = await sb
+    .from('purchase_items')
+    .update({ is_shared: isShared, assigned_to: isShared ? null : assignedTo ?? null })
+    .eq('id', itemId);
   throwIfError(error, 'Actualizando producto');
 }
 
@@ -920,8 +928,31 @@ export async function insertSettlement(
     amount: s.amount,
     note: s.note,
     settled_at: s.settledAt,
+    evidence_path: s.evidencePath ?? null,
   });
   throwIfError(error, 'Registrando liquidación');
+}
+
+/** Uploads a proof of payment; returns its storage path. */
+export async function uploadSettlementEvidence(
+  sb: SupabaseClient,
+  householdId: string,
+  settlementId: string,
+  file: File
+): Promise<string> {
+  const blob = file.type.startsWith('image/') ? await compressImage(file) : file;
+  const ext = blob.type === 'application/pdf' ? 'pdf' : blob.type === 'image/png' ? 'png' : 'jpg';
+  const path = `${householdId}/${settlementId}.${ext}`;
+  const { error } = await sb.storage
+    .from('settlement-evidence')
+    .upload(path, blob, { contentType: blob.type || 'image/jpeg', upsert: true });
+  throwIfError(error, 'Subiendo comprobante');
+  return path;
+}
+
+export async function getSettlementEvidenceUrl(sb: SupabaseClient, path: string): Promise<string | null> {
+  const { data } = await sb.storage.from('settlement-evidence').createSignedUrl(path, 60 * 10);
+  return data?.signedUrl ?? null;
 }
 
 export async function insertNotification(

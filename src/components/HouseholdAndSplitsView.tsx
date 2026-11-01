@@ -12,7 +12,6 @@ import {
   Plus,
   ShieldCheck,
   Store,
-  User,
   UserPlus,
   Users,
   Wallet,
@@ -30,6 +29,8 @@ import { getCurrentMonthPrefix } from '../utils/dates';
 import { Avatar } from './Avatar';
 import { HouseholdActivityView } from './HouseholdActivityView';
 import type { HouseholdActivityEntry } from '../services/householdRepository';
+import { SettleSheet, type SettleDetails } from './SettleSheet';
+import { AssigneeSelect } from './AssigneeSelect';
 
 interface HouseholdAndSplitsViewProps {
   mode?: 'demo' | 'cloud';
@@ -43,8 +44,9 @@ interface HouseholdAndSplitsViewProps {
   onAddMember: (name: string, email: string) => void;
   onJoinHousehold?: (inviteCode: string) => Promise<string | null>;
   onCreateSupermarket: (store: Omit<SupermarketStore, 'id'>) => void;
-  onToggleItemShared: (purchaseId: string, itemId: string) => void;
-  onRecordSettlement: (fromMemberId: string, toMemberId: string, amount: number) => void;
+  /** 'shared' or the id of the member the item belongs to */
+  onAssignItem: (purchaseId: string, itemId: string, assignee: string) => void;
+  onRecordSettlement: (fromMemberId: string, toMemberId: string, amount: number, details: SettleDetails) => void;
   loadActivity?: (() => Promise<HouseholdActivityEntry[]>) | null;
 }
 
@@ -60,7 +62,7 @@ export const HouseholdAndSplitsView: React.FC<HouseholdAndSplitsViewProps> = ({
   onAddMember,
   onJoinHousehold,
   onCreateSupermarket,
-  onToggleItemShared,
+  onAssignItem,
   onRecordSettlement,
   loadActivity = null,
 }) => {
@@ -108,10 +110,9 @@ export const HouseholdAndSplitsView: React.FC<HouseholdAndSplitsViewProps> = ({
       if (item.isShared) {
         totalSharedPool += effectiveCost;
       } else {
-        personalByMember.set(
-          purchase.createdBy,
-          (personalByMember.get(purchase.createdBy) || 0) + effectiveCost
-        );
+        const owner =
+          item.assignedTo && personalByMember.has(item.assignedTo) ? item.assignedTo : purchase.createdBy;
+        personalByMember.set(owner, (personalByMember.get(owner) || 0) + effectiveCost);
       }
     }
   }
@@ -149,6 +150,8 @@ export const HouseholdAndSplitsView: React.FC<HouseholdAndSplitsViewProps> = ({
     toName: string;
     amount: number;
   }[] = [];
+
+  const [settling, setSettling] = useState<(typeof suggestedTransfers)[number] | null>(null);
 
   const dCopy = debtors.map((d) => ({ ...d, rem: Math.abs(d.balance) }));
   const cCopy = creditors.map((c) => ({ ...c, rem: c.balance }));
@@ -394,14 +397,27 @@ export const HouseholdAndSplitsView: React.FC<HouseholdAndSplitsViewProps> = ({
                         </span>
                       </div>
                       <button
-                        onClick={() => onRecordSettlement(tr.fromId, tr.toId, tr.amount)}
+                        onClick={() => setSettling(tr)}
                         className="px-2.5 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-700 dark:text-emerald-300 text-[11px] font-bold transition shrink-0"
                       >
-                        Liquidar (SINPE)
+                        Liquidar
                       </button>
                     </div>
                   ))}
                 </div>
+              )}
+              {settling && (
+                <SettleSheet
+                  fromName={settling.fromName}
+                  toName={settling.toName}
+                  amount={settling.amount}
+                  currency={cur}
+                  onCancel={() => setSettling(null)}
+                  onConfirm={(details) => {
+                    onRecordSettlement(settling.fromId, settling.toId, settling.amount, details);
+                    setSettling(null);
+                  }}
+                />
               )}
             </div>
 
@@ -453,24 +469,12 @@ export const HouseholdAndSplitsView: React.FC<HouseholdAndSplitsViewProps> = ({
                           {formatCurrency(item.totalPrice, cur)} • {buyer?.name.split(' ')[0]}
                         </span>
                       </div>
-                      <button
-                        onClick={() => onToggleItemShared(purchaseId, item.id)}
-                        className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1 shrink-0 transition ${
-                          item.isShared
-                            ? 'bg-avocado-500/15 text-avocado-600 dark:text-avocado-400'
-                            : 'bg-purple-500/15 text-purple-600 dark:text-purple-400'
-                        }`}
-                      >
-                        {item.isShared ? (
-                          <>
-                            <Users className="w-3 h-3" /> Compartido
-                          </>
-                        ) : (
-                          <>
-                            <User className="w-3 h-3" /> Personal ({buyer?.name.split(' ')[0]})
-                          </>
-                        )}
-                      </button>
+                      <AssigneeSelect
+                        members={household.members}
+                        isShared={item.isShared}
+                        assignedTo={item.assignedTo ?? buyer?.id}
+                        onChange={(value) => onAssignItem(purchaseId, item.id, value)}
+                      />
                     </div>
                   );
                 })}
