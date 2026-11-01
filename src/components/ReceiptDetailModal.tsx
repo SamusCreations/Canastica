@@ -168,6 +168,10 @@ export const ReceiptDetailModal: React.FC<ReceiptDetailModalProps> = ({
                           ) : (
                             <>
                               <User className="w-2.5 h-2.5" /> Personal
+                              {(() => {
+                                const owner = members.find((m) => m.id === (item.assignedTo ?? purchase.createdBy));
+                                return owner ? `: ${owner.name.split(' ')[0]}` : '';
+                              })()}
                             </>
                           )}
                         </span>

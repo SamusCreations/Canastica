@@ -13,8 +13,6 @@ import {
   Tag,
   Trash2,
   Upload,
-  User,
-  Users,
   X,
 } from 'lucide-react';
 import {
@@ -47,6 +45,7 @@ import {
 import { formatCurrency, translateCategory } from '../utils/formatters';
 import { getTodayIso } from '../utils/dates';
 import { applyReceiptMemory, buildReceiptMemory } from '../lib/receiptMemory';
+import { AssigneeSelect } from './AssigneeSelect';
 import { isElectronicInvoiceFile, parseElectronicInvoiceXml } from '../lib/electronicInvoice';
 import { receiptFileKind } from '../utils/receiptFile';
 
@@ -69,6 +68,7 @@ interface EditableDraftItem {
   reviewReasons?: string[];
   learnedFromHistory?: boolean;
   isShared: boolean;
+  assignedTo?: string;
 }
 
 interface ReceiptScannerModalProps {
@@ -111,6 +111,7 @@ function purchaseToDraftItems(purchase: Purchase): EditableDraftItem[] {
     discount: 0,
     totalPrice: it.totalPrice,
     isShared: it.isShared,
+    assignedTo: it.assignedTo,
   }));
 }
 
@@ -484,6 +485,7 @@ export const ReceiptScannerModal: React.FC<ReceiptScannerModalProps> = ({
         unitPrice: Number(d.unitPrice),
         totalPrice: Number(d.totalPrice),
         isShared: d.isShared,
+        assignedTo: d.isShared ? undefined : d.assignedTo ?? paidByMemberId,
         createdBy: paidByMemberId,
         purchaseDate,
         supermarket,
@@ -1116,27 +1118,22 @@ export const ReceiptScannerModal: React.FC<ReceiptScannerModalProps> = ({
                             )}
                           </div>
                           <div className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() =>
-                                handleUpdateDraftItem(item.id, 'isShared', !item.isShared)
+                            <AssigneeSelect
+                              members={members}
+                              isShared={item.isShared}
+                              assignedTo={item.assignedTo ?? paidByMemberId}
+                              onChange={(value) =>
+                                setDraftItems((prev) =>
+                                  prev.map((d) =>
+                                    d.id !== item.id
+                                      ? d
+                                      : value === 'shared'
+                                        ? { ...d, isShared: true, assignedTo: undefined }
+                                        : { ...d, isShared: false, assignedTo: value }
+                                  )
+                                )
                               }
-                              className={`px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1 transition ${
-                                item.isShared
-                                  ? 'bg-avocado-500/15 text-avocado-600 dark:text-avocado-400'
-                                  : 'bg-purple-500/15 text-purple-600 dark:text-purple-400'
-                              }`}
-                            >
-                              {item.isShared ? (
-                                <>
-                                  <Users className="w-3 h-3" /> Compartido
-                                </>
-                              ) : (
-                                <>
-                                  <User className="w-3 h-3" /> Personal
-                                </>
-                              )}
-                            </button>
+                            />
                             <button
                               type="button"
                               onClick={() =>
