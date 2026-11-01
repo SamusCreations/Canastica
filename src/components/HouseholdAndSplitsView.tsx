@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import {
   ArrowRight,
+  History,
   Check,
   CheckCircle2,
   ChevronLeft,
@@ -26,6 +27,8 @@ import {
 import { formatCurrency } from '../utils/formatters';
 import { getCurrentMonthPrefix } from '../utils/dates';
 import { Avatar } from './Avatar';
+import { HouseholdActivityView } from './HouseholdActivityView';
+import type { HouseholdActivityEntry } from '../services/householdRepository';
 import { SettleSheet, type SettleDetails } from './SettleSheet';
 import { AssigneeSelect } from './AssigneeSelect';
 
@@ -44,6 +47,7 @@ interface HouseholdAndSplitsViewProps {
   /** 'shared' or the id of the member the item belongs to */
   onAssignItem: (purchaseId: string, itemId: string, assignee: string) => void;
   onRecordSettlement: (fromMemberId: string, toMemberId: string, amount: number, details: SettleDetails) => void;
+  loadActivity?: (() => Promise<HouseholdActivityEntry[]>) | null;
 }
 
 export const HouseholdAndSplitsView: React.FC<HouseholdAndSplitsViewProps> = ({
@@ -60,8 +64,9 @@ export const HouseholdAndSplitsView: React.FC<HouseholdAndSplitsViewProps> = ({
   onCreateSupermarket,
   onAssignItem,
   onRecordSettlement,
+  loadActivity = null,
 }) => {
-  const [subTab, setSubTab] = useState<'splits' | 'settings'>('splits');
+  const [subTab, setSubTab] = useState<'splits' | 'settings' | 'activity'>('splits');
   const [itemPage, setItemPage] = useState(0);
   const [copiedInvite, setCopiedInvite] = useState(false);
   const [budgetDraft, setBudgetDraft] = useState(String(household.monthlyBudget));
@@ -232,7 +237,7 @@ export const HouseholdAndSplitsView: React.FC<HouseholdAndSplitsViewProps> = ({
     <div className="space-y-3.5">
       {/* Top Minimalist Segmented Navigation & Invite Code Bar */}
       <div className="liquid-glass rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-        <div className="liquid-glass-subtle rounded-lg p-1 grid grid-cols-2 gap-1 w-full sm:w-auto">
+        <div className="liquid-glass-subtle rounded-lg p-1 grid grid-cols-3 gap-1 w-full sm:w-auto">
           <button
             onClick={() => setSubTab('splits')}
             className={`min-h-[40px] px-3 py-1.5 rounded-md text-sm font-bold flex items-center justify-center gap-1.5 transition ${
@@ -256,6 +261,17 @@ export const HouseholdAndSplitsView: React.FC<HouseholdAndSplitsViewProps> = ({
             <Users className="w-3.5 h-3.5 shrink-0" />
             <span className="sm:hidden">Miembros ({household.members.length})</span>
             <span className="hidden sm:inline">Miembros, Presupuesto y Comercios ({household.members.length})</span>
+          </button>
+          <button
+            onClick={() => setSubTab('activity')}
+            className={`min-h-[40px] px-3 py-1.5 rounded-md text-sm font-bold flex items-center justify-center gap-1.5 transition ${
+              subTab === 'activity'
+                ? 'liquid-lens-btn text-white'
+                : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+            }`}
+          >
+            <History className="w-3.5 h-3.5 shrink-0" />
+            Historial
           </button>
         </div>
 
@@ -471,6 +487,10 @@ export const HouseholdAndSplitsView: React.FC<HouseholdAndSplitsViewProps> = ({
       {/* ====================================================================
           SUB-VIEW 2: Miembros, Presupuesto y Comercios (Zero Scrollbars!)
           ==================================================================== */}
+      {subTab === 'activity' && (
+        <HouseholdActivityView members={household.members} loadActivity={loadActivity} />
+      )}
+
       {subTab === 'settings' && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-3.5 animate-spring-in">
           {/* Left: Members & Active User Switcher (7 cols) */}

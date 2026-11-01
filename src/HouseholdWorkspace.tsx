@@ -67,6 +67,7 @@ import {
   deletePurchase,
   updatePurchase,
   insertSettlement,
+  fetchHouseholdActivity,
   uploadSettlementEvidence,
   insertShoppingItems,
   deleteShoppingItems,
@@ -951,6 +952,11 @@ export function HouseholdWorkspace({
     setQueuedReview({ id: next.id, dataUrl: next.dataUrl, result: next.result });
   };
 
+  const loadActivity = useMemo(
+    () => (isCloud && sb ? () => fetchHouseholdActivity(sb, householdId) : null),
+    [isCloud, sb, householdId]
+  );
+
   const handleRestockFeedback = (
     canonicalName: string,
     feedback: 'ran_out' | 'still_have_some',
@@ -1538,6 +1544,7 @@ export function HouseholdWorkspace({
             {activeTab === 'household' && (
               <HouseholdAndSplitsView
                 mode={isCloud ? 'cloud' : 'demo'}
+                loadActivity={loadActivity}
                 household={household}
                 currentMemberId={currentMemberId}
                 purchases={purchases}
