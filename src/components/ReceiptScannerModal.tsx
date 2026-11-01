@@ -561,7 +561,11 @@ export const ReceiptScannerModal: React.FC<ReceiptScannerModalProps> = ({
         </div>
 
         {/* Modal Body */}
-        <div className="p-4 sm:p-6 overflow-y-auto overscroll-contain flex-1 space-y-6 pb-[calc(env(safe-area-inset-bottom)+16px)]">
+        <div
+          className={`px-4 pt-4 sm:px-6 sm:pt-6 overflow-y-auto overscroll-contain flex-1 space-y-6 ${
+            step === 'confirm' ? 'pb-[env(safe-area-inset-bottom)]' : 'pb-[calc(env(safe-area-inset-bottom)+16px)]'
+          }`}
+        >
           {step === 'upload' && (
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
               {/* Drag and Drop / Mobile Camera Zone */}
@@ -816,7 +820,7 @@ export const ReceiptScannerModal: React.FC<ReceiptScannerModalProps> = ({
                       <CheckCircle2 className="w-3.5 h-3.5" /> Lista para Guardar
                     </span>
                   </div>
-                  <div className="w-full max-h-[410px] overflow-y-auto rounded-lg bg-slate-100 dark:bg-slate-900/60 p-2 flex justify-center">
+                  <div className="w-full max-h-64 overflow-hidden lg:max-h-[410px] lg:overflow-y-auto rounded-lg bg-slate-100 dark:bg-slate-900/60 p-2 flex justify-center">
                     {receiptImageUrl && receiptFileKind(receiptImageUrl) !== 'image' ? (
                       <a
                         href={receiptImageUrl}
@@ -1070,7 +1074,7 @@ export const ReceiptScannerModal: React.FC<ReceiptScannerModalProps> = ({
                     </button>
                   </div>
 
-                  <div className="space-y-2 max-h-[290px] overflow-y-auto pr-1">
+                  <div className="space-y-2 lg:max-h-[420px] lg:overflow-y-auto lg:pr-1">
                     {draftItems.map((item) => (
                       <div
                         key={item.id}
@@ -1339,22 +1343,22 @@ export const ReceiptScannerModal: React.FC<ReceiptScannerModalProps> = ({
                   </div>
                 </div>
 
-                {/* Action Buttons */}
-                <div className="flex items-center justify-between gap-3 pt-1">
+                {/* Action Buttons: pinned to the bottom of the screen while scrolling */}
+                <div className="sticky bottom-0 z-10 -mx-4 sm:-mx-6 px-4 sm:px-6 py-3 flex flex-col-reverse sm:flex-row sm:items-center justify-between gap-2 sm:gap-3 bg-[var(--glass-bg-elevated,var(--bg-primary))] backdrop-blur-xl border-t border-[var(--glass-border)]">
                   <button
                     type="button"
                     onClick={() => setStep('upload')}
                     className="liquid-glass liquid-glass-interactive px-4 py-2.5 rounded-xl text-xs font-semibold"
                   >
-                    ← Escanear Otra Factura
+                    ← Escanear otra
                   </button>
                   <button
                     type="button"
                     onClick={handleConfirmAndSave}
-                    className="liquid-lens-btn px-6 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2"
+                    className="liquid-lens-btn px-6 py-3 rounded-xl text-sm font-bold flex items-center justify-center gap-2"
                   >
                     <CheckCircle2 className="w-4 h-4" />
-                    {isEditing ? 'Guardar Cambios' : 'Confirmar y Guardar Compra'} ({formatCurrency(receiptGrandTotal, currency)})
+                    {isEditing ? 'Guardar cambios' : 'Guardar compra'} ({formatCurrency(receiptGrandTotal, currency)})
                   </button>
                 </div>
               </div>
