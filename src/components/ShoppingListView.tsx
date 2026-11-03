@@ -8,6 +8,7 @@ import {
   MapPin,
   Plus,
   RotateCcw,
+  ShoppingCart,
   Sparkles,
   Trash2,
   Wand2,
@@ -59,6 +60,7 @@ interface ShoppingListViewProps {
   onOpenScanner: () => void;
   /** Opens the preview sheet for a pasted / shared list */
   onImportText?: (text: string) => void;
+  onOpenSupermarketMode?: () => void;
 }
 
 const EXAMPLE_NL_INPUTS = [
@@ -82,6 +84,7 @@ export const ShoppingListView: React.FC<ShoppingListViewProps> = ({
   onUndoAutoCrossOff,
   onOpenScanner,
   onImportText,
+  onOpenSupermarketMode,
 }) => {
   const [nlInput, setNlInput] = useState('');
   const [isParsing, setIsParsing] = useState(false);
@@ -387,6 +390,15 @@ export const ShoppingListView: React.FC<ShoppingListViewProps> = ({
           ))}
         </div>
       </div>
+
+      {onOpenSupermarketMode && pendingItems.length > 0 && (
+        <button
+          onClick={onOpenSupermarketMode}
+          className="w-full min-h-[52px] rounded-xl liquid-lens-btn text-sm font-bold flex items-center justify-center gap-2"
+        >
+          <ShoppingCart className="w-5 h-5" /> Modo súper: usar la lista con el carrito
+        </button>
+      )}
 
       {/* Auto-Cross-Off Summary Banner */}
       {autoCrossOffSummary && (
