@@ -1,5 +1,5 @@
 import React from 'react';
-import { Check, Home, LogOut, MessageSquareWarning, Moon, RefreshCw, Repeat, Sun, X } from 'lucide-react';
+import { Check, Home, LogOut, Mail, MessageSquareWarning, Moon, RefreshCw, Repeat, Sun, X } from 'lucide-react';
 import { openReportProblem } from '../lib/reportProblem';
 import { HouseholdMembership } from '../services/householdRepository';
 import { CurrencyCode, HouseholdMember, LanguageCode } from '../types/grocery';
@@ -31,6 +31,7 @@ interface AccountSheetProps {
   sb?: SupabaseClient | null;
   userId?: string;
   onToast?: (text: string, kind?: 'error' | 'success') => void;
+  onOpenEmailInvoices?: () => void;
 }
 
 function Segmented<T extends string>({
@@ -84,6 +85,7 @@ export const AccountSheet: React.FC<AccountSheetProps> = ({
   sb = null,
   userId,
   onToast = () => undefined,
+  onOpenEmailInvoices,
 }) => {
   if (!isOpen) return null;
 
@@ -196,6 +198,14 @@ export const AccountSheet: React.FC<AccountSheetProps> = ({
         )}
 
         <div className="space-y-1.5 pt-1 border-t border-[var(--glass-border)]">
+          {onOpenEmailInvoices && (
+            <button
+              onClick={onOpenEmailInvoices}
+              className="w-full min-h-[48px] px-3 rounded-xl flex items-center gap-3 text-sm font-semibold hover:bg-[var(--glass-bg-hover)]"
+            >
+              <Mail className="w-4 h-4 text-[var(--text-muted)]" /> Facturas por correo
+            </button>
+          )}
           {mode === 'cloud' && (
             <button
               onClick={() => {
