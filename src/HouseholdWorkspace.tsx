@@ -123,6 +123,15 @@ import { getPendingSharedText, setPendingSharedText } from './lib/sharedText';
 import { ShareImportSheet } from './components/ShareImportSheet';
 import { SupermarketMode } from './components/SupermarketMode';
 import { ShareListSheet } from './components/ShareListSheet';
+import { PriceAlertsCard } from './components/PriceAlertsCard';
+import { computePriceAlerts, DEFAULT_PRICE_ALERT_THRESHOLD, PriceAlert } from './lib/priceAlerts';
+import {
+  insertPriceAlerts,
+  loadPriceAlertState,
+  markPriceAlertsSeen,
+  mutePriceAlerts,
+  notifyPriceAlerts,
+} from './services/priceAlertsService';
 
 // A list-originated pantry entry counts as the same product for this long after it was checked off
 const LIST_TO_RECEIPT_WINDOW_DAYS = 30;
@@ -368,6 +377,8 @@ export function HouseholdWorkspace({
   const [sharedText, setSharedText] = useState<string | null>(() => getPendingSharedText());
   const [isSupermarketMode, setIsSupermarketMode] = useState(false);
   const [isShareListOpen, setIsShareListOpen] = useState(false);
+  const [priceAlerts, setPriceAlerts] = useState<PriceAlert[]>([]);
+  const [priceAlertMutes, setPriceAlertMutes] = useState<string[]>([]);
 
   // Toast feedback
   const [toast, setToast] = useState<{ kind: 'error' | 'success'; text: string } | null>(null);
@@ -404,8 +415,13 @@ export function HouseholdWorkspace({
     try {
       // Changes made without signal go up first so the fresh snapshot already includes them
       if (getOfflineQueue().length > 0 && navigator.onLine) await flushOfflineQueue(sb);
-      const snap = await loadHouseholdSnapshot(sb, householdId);
+      const [snap, alertState] = await Promise.all([
+        loadHouseholdSnapshot(sb, householdId),
+        loadPriceAlertState(sb, householdId),
+      ]);
       saveSnapshot(householdId, snap);
+      setPriceAlerts(alertState.alerts);
+      setPriceAlertMutes(alertState.mutes);
       devLog('success', 'Supabase', 'Datos del hogar cargados', {
         durationMs: Math.round(performance.now() - started),
         detail: {
@@ -753,7 +769,11 @@ export function HouseholdWorkspace({
     patch: Partial<
       Pick<
         Household,
-        'monthlyBudget' | 'restockLookbackMonths' | 'restockAlertDays' | 'minPurchasesForPrediction'
+        | 'monthlyBudget'
+        | 'restockLookbackMonths'
+        | 'restockAlertDays'
+        | 'minPurchasesForPrediction'
+        | 'priceAlertThreshold'
       >
     >
   ) => {
@@ -776,6 +796,19 @@ export function HouseholdWorkspace({
       items: scanned.items.map((it) => ({ ...it, id: newId(), purchaseId })),
     };
     setPurchases((prev) => [newPurchase, ...prev]);
+
+    // Usual products that got more expensive than their recent average in this store
+    const newPriceAlerts = computePriceAlerts(
+      newPurchase,
+      purchases,
+      household.priceAlertThreshold ?? DEFAULT_PRICE_ALERT_THRESHOLD,
+      new Set(priceAlertMutes),
+      newId
+    );
+    if (newPriceAlerts.length > 0) {
+      setPriceAlerts((prev) => [...newPriceAlerts, ...prev]);
+      if (isCloud && sb) notifyPriceAlerts(sb, householdId, newPriceAlerts);
+    }
 
     const newPantryEntries: PantryItem[] = newPurchase.items.map((item) => {
       const normInfo = normalizeReceiptProduct(item.normalizedName);
@@ -855,6 +888,10 @@ export function HouseholdWorkspace({
       await insertPantryItems(client, householdId, newPantryEntries);
       await updateShoppingItems(client, crossedOff);
       if (crossOffNotification) await insertNotification(client, householdId, crossOffNotification);
+      // Optional table: a household without the migration still saves the receipt
+      await insertPriceAlerts(client, householdId, currentMemberId, newPriceAlerts).catch((err) =>
+        devLog('warn', 'Alertas de precio', 'No se guardaron las alertas', { detail: String(err) })
+      );
     });
 
     if (isCloud) {
@@ -1590,6 +1627,33 @@ export function HouseholdWorkspace({
                   )}
                 </div>
               </div>
+            )}
+            {activeTab === 'dashboard' && (
+              <PriceAlertsCard
+                alerts={priceAlerts}
+                currency={cur}
+                threshold={household.priceAlertThreshold ?? DEFAULT_PRICE_ALERT_THRESHOLD}
+                isAdmin={isAdmin || !isCloud}
+                onDismiss={(ids) => {
+                  const idSet = new Set(ids);
+                  setPriceAlerts((prev) => prev.map((a) => (idSet.has(a.id) ? { ...a, seen: true } : a)));
+                  persist((client) => markPriceAlertsSeen(client, ids));
+                }}
+                onMute={(alert) => {
+                  const key = alert.canonicalName.trim().toLowerCase();
+                  setPriceAlertMutes((prev) => [...new Set([...prev, key])]);
+                  setPriceAlerts((prev) =>
+                    prev.map((a) => (a.canonicalName.trim().toLowerCase() === key ? { ...a, seen: true } : a))
+                  );
+                  const ids = priceAlerts.filter((a) => a.canonicalName.trim().toLowerCase() === key).map((a) => a.id);
+                  persist(async (client) => {
+                    await mutePriceAlerts(client, householdId, currentMemberId, alert.canonicalName);
+                    await markPriceAlertsSeen(client, ids);
+                  });
+                  showToast(`No avisaremos más de ${alert.productName}`, 'success');
+                }}
+                onChangeThreshold={(pct) => updateSettings({ priceAlertThreshold: pct })}
+              />
             )}
             {activeTab === 'dashboard' && (
               <DashboardView

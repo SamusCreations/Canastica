@@ -65,6 +65,8 @@ export interface Household {
   restockLookbackMonths: 3 | 6 | 12;
   restockAlertDays: number;
   minPurchasesForPrediction: number;
+  /** Price rise (in %) that triggers a price alert; 10 by default */
+  priceAlertThreshold?: number;
   members: HouseholdMember[];
   categories: CategoryBudget[];
   supermarkets: SupermarketStore[];

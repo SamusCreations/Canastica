@@ -62,6 +62,36 @@ Deno.serve(async (req: Request) => {
       return json({ sent }, 200, cors);
     }
 
+    if (action === "price-alerts") {
+      const CRC = new Intl.NumberFormat("es-CR", { style: "currency", currency: "CRC", maximumFractionDigits: 0 });
+      const alerts = (Array.isArray(payload.alerts) ? payload.alerts : [])
+        .filter((a): a is Record<string, unknown> => Boolean(a) && typeof a === "object")
+        .slice(0, 10)
+        .map((a) => ({
+          name: String(a.name ?? "").slice(0, 60),
+          store: String(a.store ?? "").slice(0, 40),
+          pct: Math.round(Number(a.pct) || 0),
+          from: Number(a.from) || 0,
+          to: Number(a.to) || 0,
+          unit: String(a.unit ?? "").slice(0, 6),
+        }))
+        .filter((a) => a.name && a.pct > 0);
+      if (alerts.length === 0) return json({ sent: 0 }, 200, cors);
+      const first = alerts[0];
+      const body =
+        alerts.length === 1
+          ? `${first.name} subió ${first.pct} % en ${first.store} (${CRC.format(first.from)} → ${CRC.format(first.to)} por ${first.unit})`
+          : `${alerts.map((a) => `${a.name} +${a.pct} %`).slice(0, 4).join(", ")}${alerts.length > 4 ? "…" : ""}`;
+      const recipients = await householdMemberIds(admin, householdId, user.id);
+      const sent = await sendPushToUsers(admin, recipients, "price_alerts", {
+        title: alerts.length === 1 ? "Subió un precio" : `Subieron ${alerts.length} precios`,
+        body,
+        url: "/?tab=dashboard",
+        tag: `price-${householdId}`,
+      });
+      return json({ sent }, 200, cors);
+    }
+
     return json({ error: "unknown_action" }, 400, cors);
   } catch (err) {
     console.error("notify:", err);

@@ -433,6 +433,7 @@ export async function loadHouseholdSnapshot(
       : 6) as 3 | 6 | 12,
     restockAlertDays: num(hh.restock_alert_days) || 2,
     minPurchasesForPrediction: num(hh.min_purchases_for_prediction) || 3,
+    priceAlertThreshold: hh.price_alert_threshold != null ? num(hh.price_alert_threshold) : 10,
     members: (membersRes.data ?? []).map((r: Row, i: number) => mapMember(r, i)),
     categories: (catRes.data ?? []).map(mapCategory),
     supermarkets: Array.isArray(hh.supermarkets) ? (hh.supermarkets as SupermarketStore[]) : [],
@@ -468,10 +469,12 @@ export async function updateHouseholdSettings(
       | 'restockLookbackMonths'
       | 'restockAlertDays'
       | 'minPurchasesForPrediction'
+      | 'priceAlertThreshold'
     >
   >
 ): Promise<void> {
   const row: Row = { updated_at: new Date().toISOString() };
+  if (patch.priceAlertThreshold !== undefined) row.price_alert_threshold = patch.priceAlertThreshold;
   if (patch.name !== undefined) row.name = patch.name;
   if (patch.monthlyBudget !== undefined) row.monthly_budget = patch.monthlyBudget;
   if (patch.currency !== undefined) row.currency = patch.currency;
