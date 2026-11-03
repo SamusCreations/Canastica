@@ -415,7 +415,7 @@ export function parseShoppingInputLocally(rawInput: string): ParsedShoppingInput
       itemText = qtyUnitMatch[3].trim();
     }
 
-    const cleanName = itemText.replace(/\b\w/g, (c) => c.toUpperCase());
+    const cleanName = itemText.replace(/(^|[\s(/-])(\p{L})/gu, (_m, sep: string, ch: string) => sep + ch.toUpperCase());
     const norm = normalizeReceiptProduct(cleanName);
 
     if (unit === 'unid') {
