@@ -10,6 +10,11 @@
   "orientation": "portrait",
   "background_color": "#ffffff",
   "theme_color": "#4f7f27",
+  "share_target": {
+    "action": "/compartir",
+    "method": "GET",
+    "params": { "title": "title", "text": "text", "url": "url" }
+  },
   "categories": ["shopping", "finance", "lifestyle"],
   "shortcuts": [
     { "name": "Lista de compras", "short_name": "Lista", "url": "/?tab=shopping-list", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] }

@@ -119,6 +119,8 @@ import {
   subscribeOfflineQueue,
 } from './lib/offlineSync';
 import { notifyListAdded } from './lib/pushNotifications';
+import { getPendingSharedText, setPendingSharedText } from './lib/sharedText';
+import { ShareImportSheet } from './components/ShareImportSheet';
 
 // A list-originated pantry entry counts as the same product for this long after it was checked off
 const LIST_TO_RECEIPT_WINDOW_DAYS = 30;
@@ -360,6 +362,8 @@ export function HouseholdWorkspace({
   const [assistantInitialPrompt, setAssistantInitialPrompt] = useState<string | null>(null);
   const [isNotifOpen, setIsNotifOpen] = useState(false);
   const [isAccountOpen, setIsAccountOpen] = useState(false);
+  // List shared from WhatsApp / pasted, waiting for review
+  const [sharedText, setSharedText] = useState<string | null>(() => getPendingSharedText());
 
   // Toast feedback
   const [toast, setToast] = useState<{ kind: 'error' | 'success'; text: string } | null>(null);
@@ -1615,6 +1619,10 @@ export function HouseholdWorkspace({
                 onClearChecked={handleClearChecked}
                 onUndoAutoCrossOff={handleUndoAutoCrossOff}
                 onOpenScanner={() => setIsScannerOpen(true)}
+                onImportText={(text) => {
+                  setPendingSharedText(text);
+                  setSharedText(text);
+                }}
               />
             )}
 
@@ -1864,6 +1872,31 @@ export function HouseholdWorkspace({
         pantry={pantry}
         predictions={predictions}
       />
+
+      {sharedText && !isLoading && (
+        <ShareImportSheet
+          text={sharedText}
+          household={household}
+          householdId={householdId}
+          memberships={memberships}
+          existingItems={shoppingList}
+          onAdd={(items) => {
+            handleAddShoppingItems(items);
+            setPendingSharedText(null);
+            setSharedText(null);
+            selectTab('shopping-list');
+            showToast(`${items.length} ${items.length === 1 ? 'producto agregado' : 'productos agregados'} a la lista`, 'success');
+          }}
+          onSwitchHousehold={(id) => {
+            // The text stays in sessionStorage; the other household's workspace reopens this sheet
+            if (id !== householdId) onSwitchHousehold(id);
+          }}
+          onClose={() => {
+            setPendingSharedText(null);
+            setSharedText(null);
+          }}
+        />
+      )}
 
       <AccountSheet
         isOpen={isAccountOpen}

@@ -6,9 +6,12 @@ import { DevConsoleRoot } from './components/DevConsoleRoot'
 import { ReportProblemRoot } from './components/ReportProblemRoot'
 import { installGlobalErrorCapture } from './lib/appContext'
 import { setupPwa } from './lib/pwa'
+import { captureSharedTextFromUrl } from './lib/sharedText'
 
 installGlobalErrorCapture()
 setupPwa()
+// A list shared from WhatsApp opens /compartir?text=...; keep it before anything else touches the URL
+captureSharedTextFromUrl()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
