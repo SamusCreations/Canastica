@@ -5,8 +5,10 @@ import App from './App.tsx'
 import { DevConsoleRoot } from './components/DevConsoleRoot'
 import { ReportProblemRoot } from './components/ReportProblemRoot'
 import { installGlobalErrorCapture } from './lib/appContext'
+import { setupPwa } from './lib/pwa'
 
 installGlobalErrorCapture()
+setupPwa()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

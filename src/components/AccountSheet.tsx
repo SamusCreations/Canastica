@@ -4,6 +4,8 @@ import { openReportProblem } from '../lib/reportProblem';
 import { HouseholdMembership } from '../services/householdRepository';
 import { CurrencyCode, HouseholdMember, LanguageCode } from '../types/grocery';
 import { Avatar } from './Avatar';
+import { DeviceSettings } from './DeviceSettings';
+import type { SupabaseClient } from '@supabase/supabase-js';
 
 interface AccountSheetProps {
   isOpen: boolean;
@@ -25,6 +27,9 @@ interface AccountSheetProps {
   onResetDemoData: () => void;
   onSignOut: () => void;
   onExitDemo: () => void;
+  sb?: SupabaseClient | null;
+  userId?: string;
+  onToast?: (text: string, kind?: 'error' | 'success') => void;
 }
 
 function Segmented<T extends string>({
@@ -75,6 +80,9 @@ export const AccountSheet: React.FC<AccountSheetProps> = ({
   onResetDemoData,
   onSignOut,
   onExitDemo,
+  sb = null,
+  userId,
+  onToast = () => undefined,
 }) => {
   if (!isOpen) return null;
 
@@ -179,6 +187,8 @@ export const AccountSheet: React.FC<AccountSheetProps> = ({
             />
           </div>
         </div>
+
+        <DeviceSettings sb={mode === 'cloud' ? sb : null} userId={userId} onToast={onToast} />
 
         <div className="space-y-1.5 pt-1 border-t border-[var(--glass-border)]">
           {mode === 'cloud' && (
