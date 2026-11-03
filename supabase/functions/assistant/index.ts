@@ -413,9 +413,7 @@ ${evidenceUrl ? `<p><a href="${escapeHtml(evidenceUrl)}" style="color:#4f7f27;fo
     `${payerName} registró en Canastica que te pagó ${amount} de los gastos de ${householdName} el ${date}.`,
     settlement.note ? `Nota: ${settlement.note}` : "",
     evidenceUrl ? `Comprobante (vence en 7 días): ${evidenceUrl}` : "No se adjuntó comprobante.",
-  ].filter(Boolean).join("
-
-");
+  ].filter(Boolean).join("\n\n");
 
   const emailRes = await fetch("https://api.resend.com/emails", {
     method: "POST",
