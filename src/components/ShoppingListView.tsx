@@ -8,6 +8,7 @@ import {
   MapPin,
   Plus,
   RotateCcw,
+  Share2,
   ShoppingCart,
   Sparkles,
   Trash2,
@@ -61,6 +62,7 @@ interface ShoppingListViewProps {
   /** Opens the preview sheet for a pasted / shared list */
   onImportText?: (text: string) => void;
   onOpenSupermarketMode?: () => void;
+  onShareList?: () => void;
 }
 
 const EXAMPLE_NL_INPUTS = [
@@ -85,6 +87,7 @@ export const ShoppingListView: React.FC<ShoppingListViewProps> = ({
   onOpenScanner,
   onImportText,
   onOpenSupermarketMode,
+  onShareList,
 }) => {
   const [nlInput, setNlInput] = useState('');
   const [isParsing, setIsParsing] = useState(false);
@@ -269,7 +272,15 @@ export const ShoppingListView: React.FC<ShoppingListViewProps> = ({
           </div>
 
           <div className="flex items-center gap-1.5">
-          {onImportText && (
+          {onShareList && (
+            <button
+              onClick={onShareList}
+              className="liquid-glass-subtle liquid-glass-interactive px-3 py-1 rounded-lg text-xs font-bold text-avocado-600 dark:text-avocado-400 flex items-center gap-1.5"
+            >
+              <Share2 className="w-3.5 h-3.5" />
+              Compartir
+            </button>
+          )}          {onImportText && (
             <button
               onClick={handlePasteList}
               className="liquid-glass-subtle liquid-glass-interactive px-3 py-1 rounded-lg text-xs font-bold text-avocado-600 dark:text-avocado-400 flex items-center gap-1.5"

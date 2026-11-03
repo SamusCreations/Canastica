@@ -69,7 +69,7 @@ export const HouseholdActivityView: React.FC<HouseholdActivityViewProps> = ({ me
                 )}
                 <div className="min-w-0 text-xs">
                   <p className="break-words">
-                    <strong>{actor?.name.split(' ')[0] ?? (e.actorId ? 'Ex miembro' : 'Canastica')}</strong> {e.summary}
+                    <strong>{actor?.name.split(' ')[0] ?? e.actorLabel ?? (e.actorId ? 'Ex miembro' : 'Canastica')}</strong> {e.summary}
                   </p>
                   <time className="text-[10px] text-[var(--text-muted)]" dateTime={e.createdAt}>
                     {timeFormat.format(new Date(e.createdAt))}
