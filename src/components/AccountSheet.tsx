@@ -5,6 +5,7 @@ import { HouseholdMembership } from '../services/householdRepository';
 import { CurrencyCode, HouseholdMember, LanguageCode } from '../types/grocery';
 import { Avatar } from './Avatar';
 import { DeviceSettings } from './DeviceSettings';
+import { SummarySettings } from './SummarySettings';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 interface AccountSheetProps {
@@ -189,6 +190,10 @@ export const AccountSheet: React.FC<AccountSheetProps> = ({
         </div>
 
         <DeviceSettings sb={mode === 'cloud' ? sb : null} userId={userId} onToast={onToast} />
+
+        {mode === 'cloud' && sb && userId && (
+          <SummarySettings sb={sb} userId={userId} householdId={householdId} onToast={onToast} />
+        )}
 
         <div className="space-y-1.5 pt-1 border-t border-[var(--glass-border)]">
           {mode === 'cloud' && (
