@@ -884,6 +884,8 @@ export async function syncRestockPredictions(
 export interface HouseholdActivityEntry {
   id: string;
   actorId: string | null;
+  /** Name typed by someone outside the household who used a shared list link */
+  actorLabel: string | null;
   entity: string;
   action: string;
   summary: string;
@@ -898,7 +900,7 @@ export async function fetchHouseholdActivity(
 ): Promise<HouseholdActivityEntry[]> {
   const { data, error } = await sb
     .from('household_activity')
-    .select('id, actor_id, entity, action, summary, created_at')
+    .select('*')
     .eq('household_id', householdId)
     .order('created_at', { ascending: false })
     .limit(limit);
@@ -906,6 +908,7 @@ export async function fetchHouseholdActivity(
   return (data ?? []).map((row) => ({
     id: row.id,
     actorId: row.actor_id,
+    actorLabel: row.actor_label ?? null,
     entity: row.entity,
     action: row.action,
     summary: row.summary,
