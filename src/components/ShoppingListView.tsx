@@ -31,7 +31,8 @@ import {
   RestockPrediction,
   ShoppingListItem,
 } from '../types/grocery';
-import { translateCategory } from '../utils/formatters';
+import { formatCurrency, translateCategory } from '../utils/formatters';
+import { buildPriceComparisons, indexComparisons } from '../lib/priceComparison';
 import { Avatar } from './Avatar';
 
 interface ShoppingListViewProps {
@@ -203,6 +204,8 @@ export const ShoppingListView: React.FC<ShoppingListViewProps> = ({
 
   // Group by place of purchase: the one the user chose, else the most common one in past receipts
   const storeSuggestions = React.useMemo(() => buildStoreSuggestions(purchases), [purchases]);
+  // "Más barato en Palí (₡2.350/kg)" hints, from the household's own receipts
+  const cheaperIndex = React.useMemo(() => indexComparisons(buildPriceComparisons(purchases)), [purchases]);
   const NO_STORE = '';
   const effectiveStore = (item: ShoppingListItem) =>
     item.store || suggestedStoreFor(storeSuggestions, item) || NO_STORE;
@@ -583,6 +586,15 @@ export const ShoppingListView: React.FC<ShoppingListViewProps> = ({
                               <option value="__other__">Otro…</option>
                             </select>
                           </label>
+                          {(() => {
+                            const comp = cheaperIndex.get((item.canonicalName || item.name).trim().toLowerCase());
+                            if (!comp || comp.spreadPct < 3) return null;
+                            return (
+                              <p className="mt-0.5 text-[10px] font-semibold text-emerald-700 dark:text-emerald-300 truncate">
+                                Más barato en {comp.cheapest.store} ({formatCurrency(comp.cheapest.avgPrice, household.currency)}/{comp.unitLabel})
+                              </p>
+                            );
+                          })()}
                         </div>
                       </div>
 

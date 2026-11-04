@@ -24,6 +24,8 @@ import { formatCurrency } from '../utils/formatters';
 import { addDaysIso, getMonthPrefix, getTodayIso, monthLabel, monthName } from '../utils/dates';
 import { Avatar } from './Avatar';
 
+import { StoreComparisonCard } from './StoreComparisonCard';
+
 interface AnalyticsAndPricesViewProps {
   household: Household;
   purchases: Purchase[];
@@ -485,6 +487,12 @@ export const AnalyticsAndPricesView: React.FC<AnalyticsAndPricesViewProps> = ({
       {/* ====================================================================
           SUB-VIEW 2: Comparador de Precios e Historial (Fits 100% in viewport)
           ==================================================================== */}
+      {subTab === 'comparator' && (
+        <div className="mb-3.5 animate-spring-in">
+          <StoreComparisonCard purchases={purchases} currency={cur} />
+        </div>
+      )}
+
       {subTab === 'comparator' && !activeProductComparison && (
         <div className="liquid-glass rounded-xl p-6 text-center space-y-1.5 animate-spring-in">
           <TrendingUp className="w-6 h-6 mx-auto text-avocado-600 dark:text-avocado-400" />
