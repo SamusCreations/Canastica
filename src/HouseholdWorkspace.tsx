@@ -121,6 +121,7 @@ import {
 import { notifyListAdded } from './lib/pushNotifications';
 import { getPendingSharedText, setPendingSharedText } from './lib/sharedText';
 import { ShareImportSheet } from './components/ShareImportSheet';
+import { SupermarketMode } from './components/SupermarketMode';
 
 // A list-originated pantry entry counts as the same product for this long after it was checked off
 const LIST_TO_RECEIPT_WINDOW_DAYS = 30;
@@ -364,6 +365,7 @@ export function HouseholdWorkspace({
   const [isAccountOpen, setIsAccountOpen] = useState(false);
   // List shared from WhatsApp / pasted, waiting for review
   const [sharedText, setSharedText] = useState<string | null>(() => getPendingSharedText());
+  const [isSupermarketMode, setIsSupermarketMode] = useState(false);
 
   // Toast feedback
   const [toast, setToast] = useState<{ kind: 'error' | 'success'; text: string } | null>(null);
@@ -1623,6 +1625,7 @@ export function HouseholdWorkspace({
                   setPendingSharedText(text);
                   setSharedText(text);
                 }}
+                onOpenSupermarketMode={() => setIsSupermarketMode(true)}
               />
             )}
 
@@ -1872,6 +1875,19 @@ export function HouseholdWorkspace({
         pantry={pantry}
         predictions={predictions}
       />
+
+      {isSupermarketMode && (
+        <SupermarketMode
+          household={household}
+          currency={cur}
+          items={shoppingList}
+          purchases={purchases}
+          isOnline={isOnline}
+          onToggleItem={handleToggleShoppingItem}
+          onOpenScanner={() => setIsScannerOpen(true)}
+          onClose={() => setIsSupermarketMode(false)}
+        />
+      )}
 
       {sharedText && !isLoading && (
         <ShareImportSheet
