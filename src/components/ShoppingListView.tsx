@@ -2,6 +2,7 @@ import React, { useRef, useState } from 'react';
 import {
   Check,
   CheckCircle2,
+  ClipboardPaste,
   Clock,
   Loader2,
   MapPin,
@@ -56,6 +57,8 @@ interface ShoppingListViewProps {
   onClearChecked: () => void;
   onUndoAutoCrossOff: () => void;
   onOpenScanner: () => void;
+  /** Opens the preview sheet for a pasted / shared list */
+  onImportText?: (text: string) => void;
 }
 
 const EXAMPLE_NL_INPUTS = [
@@ -78,6 +81,7 @@ export const ShoppingListView: React.FC<ShoppingListViewProps> = ({
   onClearChecked,
   onUndoAutoCrossOff,
   onOpenScanner,
+  onImportText,
 }) => {
   const [nlInput, setNlInput] = useState('');
   const [isParsing, setIsParsing] = useState(false);
@@ -166,6 +170,21 @@ export const ShoppingListView: React.FC<ShoppingListViewProps> = ({
     setStalled(null);
   };
 
+  const [pasteHelp, setPasteHelp] = useState('');
+  const handlePasteList = async () => {
+    if (!onImportText) return;
+    setPasteHelp('');
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text.trim()) onImportText(text);
+      else setPasteHelp('El portapapeles está vacío. Copia la lista en WhatsApp y vuelve a tocar "Pegar lista".');
+    } catch {
+      // Clipboard blocked (permissions / old browser): fall back to the text box
+      const typed = window.prompt('Pega aquí la lista:');
+      if (typed?.trim()) onImportText(typed);
+    }
+  };
+
   const pendingItems = items.filter((i) => !i.isChecked);
   const checkedItems = items.filter((i) => i.isChecked);
 
@@ -246,6 +265,16 @@ export const ShoppingListView: React.FC<ShoppingListViewProps> = ({
             </div>
           </div>
 
+          <div className="flex items-center gap-1.5">
+          {onImportText && (
+            <button
+              onClick={handlePasteList}
+              className="liquid-glass-subtle liquid-glass-interactive px-3 py-1 rounded-lg text-xs font-bold text-avocado-600 dark:text-avocado-400 flex items-center gap-1.5"
+            >
+              <ClipboardPaste className="w-3.5 h-3.5" />
+              Pegar lista
+            </button>
+          )}
           <button
             onClick={onOpenScanner}
             className="liquid-glass-subtle liquid-glass-interactive px-3 py-1 rounded-lg text-xs font-bold text-avocado-600 dark:text-avocado-400 flex items-center gap-1.5"
@@ -254,6 +283,7 @@ export const ShoppingListView: React.FC<ShoppingListViewProps> = ({
             <span className="sm:hidden">Escanear</span>
             <span className="hidden sm:inline">Escanear factura para autotachar</span>
           </button>
+          </div>
         </div>
 
         <form onSubmit={(e) => handleParseAndAdd(e)} className="flex flex-col sm:flex-row gap-2">
@@ -307,6 +337,24 @@ export const ShoppingListView: React.FC<ShoppingListViewProps> = ({
               </button>
             </div>
           </div>
+        )}
+
+        {pasteHelp && <p className="text-[11px] font-semibold text-amber-700 dark:text-amber-300">{pasteHelp}</p>}
+
+        {onImportText && (
+          <details className="text-[11px] text-[var(--text-muted)]">
+            <summary className="cursor-pointer font-semibold text-[var(--text-secondary)]">¿La lista está en WhatsApp?</summary>
+            <div className="mt-1.5 space-y-1.5 leading-relaxed">
+              <p>
+                <strong>Android:</strong> con Canastica instalada, mantén presionado el mensaje, toca Compartir y elige Canastica.
+              </p>
+              <p>
+                <strong>iPhone:</strong> copia el mensaje y toca <em>Pegar lista</em>. O crea un Atajo "Agregar a Canastica": en la app
+                Atajos, nuevo atajo que reciba <em>Texto</em> desde la hoja de compartir, con la acción <em>Codificar URL</em> y luego
+                <em> Abrir URL</em> con <code>{window.location.origin}/compartir?text=</code> seguido del texto codificado.
+              </p>
+            </div>
+          </details>
         )}
 
         {queuedNotice && (

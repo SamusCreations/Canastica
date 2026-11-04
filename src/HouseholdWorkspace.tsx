@@ -69,8 +69,6 @@ import {
   insertSettlement,
   fetchHouseholdActivity,
   uploadSettlementEvidence,
-  insertShoppingItems,
-  deleteShoppingItems,
   loadHouseholdSnapshot,
   markNotificationsRead,
   newId,
@@ -109,6 +107,20 @@ import { devLog } from './lib/devConsole';
 import { setReportScreenContext } from './lib/appContext';
 import { formatCurrency } from './utils/formatters';
 import { BrandMark } from './components/BrandLogo';
+import {
+  enqueueOfflineOp,
+  flushOfflineQueue,
+  getOfflineQueue,
+  isNetworkError,
+  loadSnapshot,
+  OfflineOp,
+  runOfflineOp,
+  saveSnapshot,
+  subscribeOfflineQueue,
+} from './lib/offlineSync';
+import { notifyListAdded } from './lib/pushNotifications';
+import { getPendingSharedText, setPendingSharedText } from './lib/sharedText';
+import { ShareImportSheet } from './components/ShareImportSheet';
 
 // A list-originated pantry entry counts as the same product for this long after it was checked off
 const LIST_TO_RECEIPT_WINDOW_DAYS = 30;
@@ -166,6 +178,7 @@ const DEMO_STATE_STORAGE_KEY = 'glasscart_household_state_crc_v2';
 const PREFS_STORAGE_KEY = 'glasscart_view_prefs_v1';
 
 type TabId = 'dashboard' | 'shopping-list' | 'restock-ai' | 'pantry' | 'analytics' | 'household';
+const TAB_IDS: TabId[] = ['dashboard', 'shopping-list', 'restock-ai', 'pantry', 'analytics', 'household'];
 
 interface PersistedHouseholdState {
   household: Household;
@@ -281,7 +294,16 @@ export function HouseholdWorkspace({
     []
   );
 
-  const [activeTab, setActiveTab] = useState<TabId>('dashboard');
+  // Notifications open the app at /?tab=shopping-list etc.
+  const [activeTab, setActiveTab] = useState<TabId>(() => {
+    const params = new URLSearchParams(window.location.search);
+    const tab = params.get('tab') as TabId | null;
+    if (!tab) return 'dashboard';
+    params.delete('tab');
+    const qs = params.toString();
+    window.history.replaceState(null, '', `${window.location.pathname}${qs ? `?${qs}` : ''}${window.location.hash}`);
+    return TAB_IDS.includes(tab) ? tab : 'dashboard';
+  });
 
   // Core Household State
   const [baseHousehold, setHousehold] = useState<Household>(initial.household);
@@ -328,6 +350,8 @@ export function HouseholdWorkspace({
   const [realtimeConnected, setRealtimeConnected] = useState(false);
   const pendingWritesRef = useRef(0);
   const reloadRequestedRef = useRef(false);
+  const loadedOnceRef = useRef(false);
+  const offlinePending = useSyncExternalStore(subscribeOfflineQueue, () => getOfflineQueue().length);
 
   // Modals & Drawers
   const [isScannerOpen, setIsScannerOpen] = useState(false);
@@ -338,6 +362,8 @@ export function HouseholdWorkspace({
   const [assistantInitialPrompt, setAssistantInitialPrompt] = useState<string | null>(null);
   const [isNotifOpen, setIsNotifOpen] = useState(false);
   const [isAccountOpen, setIsAccountOpen] = useState(false);
+  // List shared from WhatsApp / pasted, waiting for review
+  const [sharedText, setSharedText] = useState<string | null>(() => getPendingSharedText());
 
   // Toast feedback
   const [toast, setToast] = useState<{ kind: 'error' | 'success'; text: string } | null>(null);
@@ -372,7 +398,10 @@ export function HouseholdWorkspace({
     setIsSyncing(true);
     const started = performance.now();
     try {
+      // Changes made without signal go up first so the fresh snapshot already includes them
+      if (getOfflineQueue().length > 0 && navigator.onLine) await flushOfflineQueue(sb);
       const snap = await loadHouseholdSnapshot(sb, householdId);
+      saveSnapshot(householdId, snap);
       devLog('success', 'Supabase', 'Datos del hogar cargados', {
         durationMs: Math.round(performance.now() - started),
         detail: {
@@ -394,8 +423,26 @@ export function HouseholdWorkspace({
       setFeedbackMultipliers(snap.feedbackMultipliers);
       setLoadError(null);
     } catch (err) {
-      setLoadError(describeSupabaseError(err));
+      // Without signal, open with the last copy saved on this device
+      const offline = isNetworkError(err);
+      const cached = offline && !loadedOnceRef.current ? loadSnapshot(householdId) : null;
+      if (cached) {
+        const snap = cached.snap;
+        setHousehold(snap.household);
+        setPurchases(snap.purchases);
+        setShoppingList(snap.shoppingList);
+        setPantry(snap.pantry);
+        setSettlements(snap.settlements);
+        setNotifications(snap.notifications);
+        setFeedbackMultipliers(snap.feedbackMultipliers);
+        setLoadError(null);
+        devLog('warn', 'Sin conexión', 'Se abrió la copia guardada en este dispositivo', { detail: { savedAt: cached.savedAt } });
+      } else if (!offline || !loadedOnceRef.current) {
+        // Offline after the first load: keep showing what's on screen
+        setLoadError(describeSupabaseError(err));
+      }
     } finally {
+      loadedOnceRef.current = true;
       setIsLoading(false);
       setIsSyncing(false);
     }
@@ -432,6 +479,33 @@ export function HouseholdWorkspace({
         });
     },
     [isCloud, sb, reload, showToast]
+  );
+
+  /**
+   * Shopping list / pantry writes that also work without signal: offline (or while older
+   * offline changes are still waiting) they're queued in order and replayed later.
+   */
+  const persistOffline = useCallback(
+    (ops: OfflineOp[]) => {
+      if (!isCloud || !sb || ops.length === 0) return;
+      if (!navigator.onLine || getOfflineQueue().length > 0) {
+        ops.forEach(enqueueOfflineOp);
+        if (navigator.onLine) void flushOfflineQueue(sb);
+        return;
+      }
+      persist(async (client) => {
+        for (let i = 0; i < ops.length; i++) {
+          try {
+            await runOfflineOp(client, ops[i]);
+          } catch (err) {
+            if (!isNetworkError(err)) throw err;
+            ops.slice(i).forEach(enqueueOfflineOp);
+            return;
+          }
+        }
+      });
+    },
+    [isCloud, sb, persist]
   );
 
   useEffect(() => {
@@ -522,6 +596,38 @@ export function HouseholdWorkspace({
     notifications,
     feedbackMultipliers,
   ]);
+
+  // Cloud: keep this device's copy current (including changes made offline) so the app opens without signal
+  useEffect(() => {
+    if (!isCloud || isLoading || !householdId) return;
+    const timer = window.setTimeout(
+      () =>
+        saveSnapshot(householdId, {
+          household: baseHousehold,
+          purchases,
+          shoppingList,
+          pantry,
+          settlements,
+          notifications,
+          feedbackMultipliers,
+        }),
+      800
+    );
+    return () => window.clearTimeout(timer);
+  }, [isCloud, isLoading, householdId, baseHousehold, purchases, shoppingList, pantry, settlements, notifications, feedbackMultipliers]);
+
+  // Back online: upload queued changes, then refresh
+  useEffect(() => {
+    if (!isCloud || !sb) return;
+    const onOnline = () => {
+      void flushOfflineQueue(sb).then((n) => {
+        if (n > 0) showToast(`${n} ${n === 1 ? 'cambio subido' : 'cambios subidos'} al volver la conexión`, 'success');
+        void reload();
+      });
+    };
+    window.addEventListener('online', onOnline);
+    return () => window.removeEventListener('online', onOnline);
+  }, [isCloud, sb, reload, showToast]);
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
@@ -798,7 +904,7 @@ export function HouseholdWorkspace({
     setShoppingList((prev) => prev.map((item) => restoredMap.get(item.id) ?? item));
     setAutoCrossOffSummary(null);
     setLastCrossedOffIds([]);
-    persist((client) => updateShoppingItems(client, restored));
+    persistOffline([{ kind: 'updateList', items: restored }]);
   };
 
   const handleAddShoppingItems = (
@@ -829,7 +935,11 @@ export function HouseholdWorkspace({
       createdAt,
     }));
     setShoppingList((prev) => [...created, ...prev]);
-    persist((client) => insertShoppingItems(client, householdId, created));
+    persistOffline([{ kind: 'insertList', householdId, items: created }]);
+    if (isCloud && sb) {
+      const manual = created.filter((it) => !it.isPredicted).map((it) => it.name);
+      if (manual.length > 0) notifyListAdded(sb, householdId, manual);
+    }
   };
 
   const handleToggleShoppingItem = (id: string) => {
@@ -848,21 +958,21 @@ export function HouseholdWorkspace({
     if (updated.isChecked && !pantry.some((p) => p.id === id)) {
       const entry = pantryEntryFromListItem(updated, currentMemberId);
       setPantry((prev) => [entry, ...prev]);
-      persist(async (client) => {
-        await updateShoppingItems(client, [updated]);
-        await insertPantryItems(client, householdId, [entry]);
-      });
+      persistOffline([
+        { kind: 'updateList', items: [updated] },
+        { kind: 'insertPantry', householdId, items: [entry] },
+      ]);
       return;
     }
     if (!updated.isChecked && linkedPantry) {
       setPantry((prev) => prev.filter((p) => p.id !== id));
-      persist(async (client) => {
-        await updateShoppingItems(client, [updated]);
-        await deletePantryItems(client, [id]);
-      });
+      persistOffline([
+        { kind: 'updateList', items: [updated] },
+        { kind: 'deletePantry', ids: [id] },
+      ]);
       return;
     }
-    persist((client) => updateShoppingItems(client, [updated]));
+    persistOffline([{ kind: 'updateList', items: [updated] }]);
   };
 
   const handleSetShoppingStore = (id: string, store: string | undefined) => {
@@ -870,18 +980,18 @@ export function HouseholdWorkspace({
     if (!item) return;
     const updated: ShoppingListItem = { ...item, store: store?.trim() || undefined };
     setShoppingList((prev) => prev.map((it) => (it.id === id ? updated : it)));
-    persist((client) => updateShoppingItems(client, [updated]));
+    persistOffline([{ kind: 'updateList', items: [updated] }]);
   };
 
   const handleDeleteShoppingItem = (id: string) => {
     setShoppingList((prev) => prev.filter((it) => it.id !== id));
-    persist((client) => deleteShoppingItems(client, [id]));
+    persistOffline([{ kind: 'deleteList', ids: [id] }]);
   };
 
   const handleClearChecked = () => {
     const ids = shoppingList.filter((it) => it.isChecked).map((it) => it.id);
     setShoppingList((prev) => prev.filter((it) => !it.isChecked));
-    persist((client) => deleteShoppingItems(client, ids));
+    persistOffline([{ kind: 'deleteList', ids }]);
   };
 
   // ------------------------------------------------------------------------
@@ -1177,6 +1287,7 @@ export function HouseholdWorkspace({
   const syncBadge = !isOnline ? (
     <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-300">
       <WifiOff className="w-3 h-3" /> {lang === 'es' ? 'Sin conexión' : 'Offline'}
+      {offlinePending > 0 && ` · ${offlinePending} ${lang === 'es' ? 'por subir' : 'to sync'}`}
     </span>
   ) : !isCloud ? (
     <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-violet-500/15 text-violet-700 dark:text-violet-300">
@@ -1508,6 +1619,10 @@ export function HouseholdWorkspace({
                 onClearChecked={handleClearChecked}
                 onUndoAutoCrossOff={handleUndoAutoCrossOff}
                 onOpenScanner={() => setIsScannerOpen(true)}
+                onImportText={(text) => {
+                  setPendingSharedText(text);
+                  setSharedText(text);
+                }}
               />
             )}
 
@@ -1758,6 +1873,31 @@ export function HouseholdWorkspace({
         predictions={predictions}
       />
 
+      {sharedText && !isLoading && (
+        <ShareImportSheet
+          text={sharedText}
+          household={household}
+          householdId={householdId}
+          memberships={memberships}
+          existingItems={shoppingList}
+          onAdd={(items) => {
+            handleAddShoppingItems(items);
+            setPendingSharedText(null);
+            setSharedText(null);
+            selectTab('shopping-list');
+            showToast(`${items.length} ${items.length === 1 ? 'producto agregado' : 'productos agregados'} a la lista`, 'success');
+          }}
+          onSwitchHousehold={(id) => {
+            // The text stays in sessionStorage; the other household's workspace reopens this sheet
+            if (id !== householdId) onSwitchHousehold(id);
+          }}
+          onClose={() => {
+            setPendingSharedText(null);
+            setSharedText(null);
+          }}
+        />
+      )}
+
       <AccountSheet
         isOpen={isAccountOpen}
         onClose={() => setIsAccountOpen(false)}
@@ -1786,6 +1926,9 @@ export function HouseholdWorkspace({
         onResetDemoData={handleResetDemoData}
         onSignOut={onSignOut}
         onExitDemo={onExitDemo}
+        sb={sb}
+        userId={userId}
+        onToast={showToast}
       />
     </div>
   );
