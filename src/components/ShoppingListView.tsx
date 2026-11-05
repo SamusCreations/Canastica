@@ -2,11 +2,14 @@ import React, { useRef, useState } from 'react';
 import {
   Check,
   CheckCircle2,
+  ClipboardPaste,
   Clock,
   Loader2,
   MapPin,
   Plus,
   RotateCcw,
+  Share2,
+  ShoppingCart,
   Sparkles,
   Trash2,
   Wand2,
@@ -28,7 +31,8 @@ import {
   RestockPrediction,
   ShoppingListItem,
 } from '../types/grocery';
-import { translateCategory } from '../utils/formatters';
+import { formatCurrency, translateCategory } from '../utils/formatters';
+import { buildPriceComparisons, indexComparisons } from '../lib/priceComparison';
 import { Avatar } from './Avatar';
 
 interface ShoppingListViewProps {
@@ -56,6 +60,10 @@ interface ShoppingListViewProps {
   onClearChecked: () => void;
   onUndoAutoCrossOff: () => void;
   onOpenScanner: () => void;
+  /** Opens the preview sheet for a pasted / shared list */
+  onImportText?: (text: string) => void;
+  onOpenSupermarketMode?: () => void;
+  onShareList?: () => void;
 }
 
 const EXAMPLE_NL_INPUTS = [
@@ -78,6 +86,9 @@ export const ShoppingListView: React.FC<ShoppingListViewProps> = ({
   onClearChecked,
   onUndoAutoCrossOff,
   onOpenScanner,
+  onImportText,
+  onOpenSupermarketMode,
+  onShareList,
 }) => {
   const [nlInput, setNlInput] = useState('');
   const [isParsing, setIsParsing] = useState(false);
@@ -166,6 +177,21 @@ export const ShoppingListView: React.FC<ShoppingListViewProps> = ({
     setStalled(null);
   };
 
+  const [pasteHelp, setPasteHelp] = useState('');
+  const handlePasteList = async () => {
+    if (!onImportText) return;
+    setPasteHelp('');
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text.trim()) onImportText(text);
+      else setPasteHelp('El portapapeles está vacío. Copia la lista en WhatsApp y vuelve a tocar "Pegar lista".');
+    } catch {
+      // Clipboard blocked (permissions / old browser): fall back to the text box
+      const typed = window.prompt('Pega aquí la lista:');
+      if (typed?.trim()) onImportText(typed);
+    }
+  };
+
   const pendingItems = items.filter((i) => !i.isChecked);
   const checkedItems = items.filter((i) => i.isChecked);
 
@@ -178,6 +204,8 @@ export const ShoppingListView: React.FC<ShoppingListViewProps> = ({
 
   // Group by place of purchase: the one the user chose, else the most common one in past receipts
   const storeSuggestions = React.useMemo(() => buildStoreSuggestions(purchases), [purchases]);
+  // "Más barato en Palí (₡2.350/kg)" hints, from the household's own receipts
+  const cheaperIndex = React.useMemo(() => indexComparisons(buildPriceComparisons(purchases)), [purchases]);
   const NO_STORE = '';
   const effectiveStore = (item: ShoppingListItem) =>
     item.store || suggestedStoreFor(storeSuggestions, item) || NO_STORE;
@@ -246,6 +274,24 @@ export const ShoppingListView: React.FC<ShoppingListViewProps> = ({
             </div>
           </div>
 
+          <div className="flex items-center gap-1.5">
+          {onShareList && (
+            <button
+              onClick={onShareList}
+              className="liquid-glass-subtle liquid-glass-interactive px-3 py-1 rounded-lg text-xs font-bold text-avocado-600 dark:text-avocado-400 flex items-center gap-1.5"
+            >
+              <Share2 className="w-3.5 h-3.5" />
+              Compartir
+            </button>
+          )}          {onImportText && (
+            <button
+              onClick={handlePasteList}
+              className="liquid-glass-subtle liquid-glass-interactive px-3 py-1 rounded-lg text-xs font-bold text-avocado-600 dark:text-avocado-400 flex items-center gap-1.5"
+            >
+              <ClipboardPaste className="w-3.5 h-3.5" />
+              Pegar lista
+            </button>
+          )}
           <button
             onClick={onOpenScanner}
             className="liquid-glass-subtle liquid-glass-interactive px-3 py-1 rounded-lg text-xs font-bold text-avocado-600 dark:text-avocado-400 flex items-center gap-1.5"
@@ -254,6 +300,7 @@ export const ShoppingListView: React.FC<ShoppingListViewProps> = ({
             <span className="sm:hidden">Escanear</span>
             <span className="hidden sm:inline">Escanear factura para autotachar</span>
           </button>
+          </div>
         </div>
 
         <form onSubmit={(e) => handleParseAndAdd(e)} className="flex flex-col sm:flex-row gap-2">
@@ -309,6 +356,24 @@ export const ShoppingListView: React.FC<ShoppingListViewProps> = ({
           </div>
         )}
 
+        {pasteHelp && <p className="text-[11px] font-semibold text-amber-700 dark:text-amber-300">{pasteHelp}</p>}
+
+        {onImportText && (
+          <details className="text-[11px] text-[var(--text-muted)]">
+            <summary className="cursor-pointer font-semibold text-[var(--text-secondary)]">¿La lista está en WhatsApp?</summary>
+            <div className="mt-1.5 space-y-1.5 leading-relaxed">
+              <p>
+                <strong>Android:</strong> con Canastica instalada, mantén presionado el mensaje, toca Compartir y elige Canastica.
+              </p>
+              <p>
+                <strong>iPhone:</strong> copia el mensaje y toca <em>Pegar lista</em>. O crea un Atajo "Agregar a Canastica": en la app
+                Atajos, nuevo atajo que reciba <em>Texto</em> desde la hoja de compartir, con la acción <em>Codificar URL</em> y luego
+                <em> Abrir URL</em> con <code>{window.location.origin}/compartir?text=</code> seguido del texto codificado.
+              </p>
+            </div>
+          </details>
+        )}
+
         {queuedNotice && (
           <p className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">{queuedNotice}</p>
         )}
@@ -339,6 +404,15 @@ export const ShoppingListView: React.FC<ShoppingListViewProps> = ({
           ))}
         </div>
       </div>
+
+      {onOpenSupermarketMode && pendingItems.length > 0 && (
+        <button
+          onClick={onOpenSupermarketMode}
+          className="w-full min-h-[52px] rounded-xl liquid-lens-btn text-sm font-bold flex items-center justify-center gap-2"
+        >
+          <ShoppingCart className="w-5 h-5" /> Modo súper: usar la lista con el carrito
+        </button>
+      )}
 
       {/* Auto-Cross-Off Summary Banner */}
       {autoCrossOffSummary && (
@@ -512,6 +586,15 @@ export const ShoppingListView: React.FC<ShoppingListViewProps> = ({
                               <option value="__other__">Otro…</option>
                             </select>
                           </label>
+                          {(() => {
+                            const comp = cheaperIndex.get((item.canonicalName || item.name).trim().toLowerCase());
+                            if (!comp || comp.spreadPct < 3) return null;
+                            return (
+                              <p className="mt-0.5 text-[10px] font-semibold text-emerald-700 dark:text-emerald-300 truncate">
+                                Más barato en {comp.cheapest.store} ({formatCurrency(comp.cheapest.avgPrice, household.currency)}/{comp.unitLabel})
+                              </p>
+                            );
+                          })()}
                         </div>
                       </div>
 

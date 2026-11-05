@@ -119,6 +119,36 @@ import {
   subscribeOfflineQueue,
 } from './lib/offlineSync';
 import { notifyListAdded } from './lib/pushNotifications';
+import { getPendingSharedText, setPendingSharedText } from './lib/sharedText';
+import { ShareImportSheet } from './components/ShareImportSheet';
+import { SupermarketMode } from './components/SupermarketMode';
+import { ShareListSheet } from './components/ShareListSheet';
+import { PriceAlertsCard } from './components/PriceAlertsCard';
+import { InboundInvoicesCard } from './components/InboundInvoicesCard';
+import { EmailInvoicesSheet } from './components/EmailInvoicesSheet';
+import {
+  claimInboundForImport,
+  getMailbox,
+  INBOUND_DOMAIN,
+  InboundInvoice,
+  InvoiceMailbox,
+  linkInboundPurchase,
+  listInboundInvoices,
+  loadInboundScan,
+  pdfUrl,
+  purchaseFromScan,
+  setInboundStatus,
+} from './services/inboundInvoicesService';
+
+const INBOUND_QUEUE_PREFIX = 'inbound:';
+import { computePriceAlerts, DEFAULT_PRICE_ALERT_THRESHOLD, PriceAlert } from './lib/priceAlerts';
+import {
+  insertPriceAlerts,
+  loadPriceAlertState,
+  markPriceAlertsSeen,
+  mutePriceAlerts,
+  notifyPriceAlerts,
+} from './services/priceAlertsService';
 
 // A list-originated pantry entry counts as the same product for this long after it was checked off
 const LIST_TO_RECEIPT_WINDOW_DAYS = 30;
@@ -360,6 +390,18 @@ export function HouseholdWorkspace({
   const [assistantInitialPrompt, setAssistantInitialPrompt] = useState<string | null>(null);
   const [isNotifOpen, setIsNotifOpen] = useState(false);
   const [isAccountOpen, setIsAccountOpen] = useState(false);
+  // List shared from WhatsApp / pasted, waiting for review
+  const [sharedText, setSharedText] = useState<string | null>(() => getPendingSharedText());
+  const [isSupermarketMode, setIsSupermarketMode] = useState(false);
+  const [isShareListOpen, setIsShareListOpen] = useState(false);
+  const [priceAlerts, setPriceAlerts] = useState<PriceAlert[]>([]);
+  const [priceAlertMutes, setPriceAlertMutes] = useState<string[]>([]);
+  // Facturas por correo
+  const [inboundInvoices, setInboundInvoices] = useState<InboundInvoice[]>([]);
+  const [invoiceMailbox, setInvoiceMailbox] = useState<InvoiceMailbox | null>(null);
+  const [isEmailInvoicesOpen, setIsEmailInvoicesOpen] = useState(false);
+  const [inboundBusyId, setInboundBusyId] = useState<string | null>(null);
+  const lastSavedPurchaseIdRef = useRef<string | null>(null);
 
   // Toast feedback
   const [toast, setToast] = useState<{ kind: 'error' | 'success'; text: string } | null>(null);
@@ -396,8 +438,17 @@ export function HouseholdWorkspace({
     try {
       // Changes made without signal go up first so the fresh snapshot already includes them
       if (getOfflineQueue().length > 0 && navigator.onLine) await flushOfflineQueue(sb);
-      const snap = await loadHouseholdSnapshot(sb, householdId);
+      const [snap, alertState, inbound, mailbox] = await Promise.all([
+        loadHouseholdSnapshot(sb, householdId),
+        loadPriceAlertState(sb, householdId),
+        INBOUND_DOMAIN ? listInboundInvoices(sb, householdId) : Promise.resolve([]),
+        INBOUND_DOMAIN ? getMailbox(sb, householdId) : Promise.resolve(null),
+      ]);
       saveSnapshot(householdId, snap);
+      setPriceAlerts(alertState.alerts);
+      setPriceAlertMutes(alertState.mutes);
+      setInboundInvoices(inbound);
+      setInvoiceMailbox(mailbox);
       devLog('success', 'Supabase', 'Datos del hogar cargados', {
         durationMs: Math.round(performance.now() - started),
         detail: {
@@ -745,7 +796,11 @@ export function HouseholdWorkspace({
     patch: Partial<
       Pick<
         Household,
-        'monthlyBudget' | 'restockLookbackMonths' | 'restockAlertDays' | 'minPurchasesForPrediction'
+        | 'monthlyBudget'
+        | 'restockLookbackMonths'
+        | 'restockAlertDays'
+        | 'minPurchasesForPrediction'
+        | 'priceAlertThreshold'
       >
     >
   ) => {
@@ -761,6 +816,7 @@ export function HouseholdWorkspace({
   const handleSavePurchase = (scanned: Purchase) => {
     // Fresh UUIDs so rows are valid for Postgres and stable across devices
     const purchaseId = newId();
+    lastSavedPurchaseIdRef.current = purchaseId;
     const newPurchase: Purchase = {
       ...scanned,
       id: purchaseId,
@@ -768,6 +824,19 @@ export function HouseholdWorkspace({
       items: scanned.items.map((it) => ({ ...it, id: newId(), purchaseId })),
     };
     setPurchases((prev) => [newPurchase, ...prev]);
+
+    // Usual products that got more expensive than their recent average in this store
+    const newPriceAlerts = computePriceAlerts(
+      newPurchase,
+      purchases,
+      household.priceAlertThreshold ?? DEFAULT_PRICE_ALERT_THRESHOLD,
+      new Set(priceAlertMutes),
+      newId
+    );
+    if (newPriceAlerts.length > 0) {
+      setPriceAlerts((prev) => [...newPriceAlerts, ...prev]);
+      if (isCloud && sb) notifyPriceAlerts(sb, householdId, newPriceAlerts);
+    }
 
     const newPantryEntries: PantryItem[] = newPurchase.items.map((item) => {
       const normInfo = normalizeReceiptProduct(item.normalizedName);
@@ -847,6 +916,10 @@ export function HouseholdWorkspace({
       await insertPantryItems(client, householdId, newPantryEntries);
       await updateShoppingItems(client, crossedOff);
       if (crossOffNotification) await insertNotification(client, householdId, crossOffNotification);
+      // Optional table: a household without the migration still saves the receipt
+      await insertPriceAlerts(client, householdId, currentMemberId, newPriceAlerts).catch((err) =>
+        devLog('warn', 'Alertas de precio', 'No se guardaron las alertas', { detail: String(err) })
+      );
     });
 
     if (isCloud) {
@@ -989,6 +1062,66 @@ export function HouseholdWorkspace({
     setShoppingList((prev) => prev.filter((it) => !it.isChecked));
     persistOffline([{ kind: 'deleteList', ids }]);
   };
+
+  // ------------------------------------------------------------------------
+  // Facturas por correo: review, discard and optional automatic import
+  // ------------------------------------------------------------------------
+  const handleReviewInbound = async (invoice: InboundInvoice) => {
+    if (!sb) return;
+    setInboundBusyId(invoice.id);
+    try {
+      const scan = await loadInboundScan(sb, invoice);
+      if (!scan) {
+        showToast('No pudimos leer esa factura. Puedes descartarla y registrarla a mano.');
+        return;
+      }
+      setQueuedReview({ id: `${INBOUND_QUEUE_PREFIX}${invoice.id}`, dataUrl: scan.dataUrl, result: scan.result });
+    } finally {
+      setInboundBusyId(null);
+    }
+  };
+
+  const handleDiscardInbound = (invoice: InboundInvoice) => {
+    setInboundInvoices((prev) => prev.filter((i) => i.id !== invoice.id));
+    persist((client) => setInboundStatus(client, invoice.id, 'rejected'));
+  };
+
+  const handleOpenInboundPdf = async (invoice: InboundInvoice) => {
+    if (!sb || !invoice.pdfPath) return;
+    const url = await pdfUrl(sb, invoice.pdfPath);
+    if (url) window.open(url, '_blank', 'noopener');
+    else showToast('No se pudo abrir el PDF.');
+  };
+
+  const savePurchaseRef = useRef(handleSavePurchase);
+  savePurchaseRef.current = handleSavePurchase;
+  const autoImportingRef = useRef(false);
+  const autoImportTriedRef = useRef(new Set<string>());
+  useEffect(() => {
+    if (!isCloud || !sb || isLoading || !invoiceMailbox?.autoImport || autoImportingRef.current) return;
+    // Each invoice is tried once per session, so one that can't be read doesn't loop
+    const candidates = inboundInvoices.filter((i) => i.status === 'pending' && i.xmlPath && !autoImportTriedRef.current.has(i.id));
+    if (candidates.length === 0) return;
+    autoImportingRef.current = true;
+    void (async () => {
+      const importedIds = new Set<string>();
+      for (const invoice of candidates) {
+        autoImportTriedRef.current.add(invoice.id);
+        const scan = await loadInboundScan(sb, invoice);
+        if (!scan || !(await claimInboundForImport(sb, invoice.id))) continue;
+        savePurchaseRef.current(purchaseFromScan(scan.result, scan.dataUrl, baseHousehold.supermarkets, currentMemberId));
+        const purchaseId = lastSavedPurchaseIdRef.current;
+        if (purchaseId) await linkInboundPurchase(sb, invoice.id, purchaseId);
+        importedIds.add(invoice.id);
+      }
+      const imported = importedIds.size;
+      if (imported > 0) {
+        setInboundInvoices((prev) => prev.filter((i) => !importedIds.has(i.id)));
+        showToast(`${imported} ${imported === 1 ? 'factura importada' : 'facturas importadas'} del correo`, 'success');
+      }
+      autoImportingRef.current = false;
+    })();
+  }, [isCloud, sb, isLoading, invoiceMailbox, inboundInvoices, baseHousehold.supermarkets, currentMemberId, showToast]);
 
   // ------------------------------------------------------------------------
   // AI queue: requests saved while the AI was slow or down, retried in the background
@@ -1583,6 +1716,44 @@ export function HouseholdWorkspace({
                 </div>
               </div>
             )}
+            {activeTab === 'dashboard' && isCloud && (
+              <InboundInvoicesCard
+                invoices={inboundInvoices}
+                currency={cur}
+                busyId={inboundBusyId}
+                onReview={(inv) => void handleReviewInbound(inv)}
+                onOpenPdf={(inv) => void handleOpenInboundPdf(inv)}
+                onDiscard={handleDiscardInbound}
+                onOpenSettings={() => setIsEmailInvoicesOpen(true)}
+              />
+            )}
+            {activeTab === 'dashboard' && (
+              <PriceAlertsCard
+                alerts={priceAlerts}
+                currency={cur}
+                threshold={household.priceAlertThreshold ?? DEFAULT_PRICE_ALERT_THRESHOLD}
+                isAdmin={isAdmin || !isCloud}
+                onDismiss={(ids) => {
+                  const idSet = new Set(ids);
+                  setPriceAlerts((prev) => prev.map((a) => (idSet.has(a.id) ? { ...a, seen: true } : a)));
+                  persist((client) => markPriceAlertsSeen(client, ids));
+                }}
+                onMute={(alert) => {
+                  const key = alert.canonicalName.trim().toLowerCase();
+                  setPriceAlertMutes((prev) => [...new Set([...prev, key])]);
+                  setPriceAlerts((prev) =>
+                    prev.map((a) => (a.canonicalName.trim().toLowerCase() === key ? { ...a, seen: true } : a))
+                  );
+                  const ids = priceAlerts.filter((a) => a.canonicalName.trim().toLowerCase() === key).map((a) => a.id);
+                  persist(async (client) => {
+                    await mutePriceAlerts(client, householdId, currentMemberId, alert.canonicalName);
+                    await markPriceAlertsSeen(client, ids);
+                  });
+                  showToast(`No avisaremos más de ${alert.productName}`, 'success');
+                }}
+                onChangeThreshold={(pct) => updateSettings({ priceAlertThreshold: pct })}
+              />
+            )}
             {activeTab === 'dashboard' && (
               <DashboardView
                 household={household}
@@ -1615,6 +1786,12 @@ export function HouseholdWorkspace({
                 onClearChecked={handleClearChecked}
                 onUndoAutoCrossOff={handleUndoAutoCrossOff}
                 onOpenScanner={() => setIsScannerOpen(true)}
+                onImportText={(text) => {
+                  setPendingSharedText(text);
+                  setSharedText(text);
+                }}
+                onOpenSupermarketMode={() => setIsSupermarketMode(true)}
+                onShareList={isCloud ? () => setIsShareListOpen(true) : undefined}
               />
             )}
 
@@ -1828,6 +2005,14 @@ export function HouseholdWorkspace({
         }}
         householdId={householdId}
         queuedScan={queuedReview}
+        onQueuedScanSaved={(queueId) => {
+          // Invoice received by email and approved by the user
+          if (!queueId.startsWith(INBOUND_QUEUE_PREFIX) || !sb) return;
+          const inboundId = queueId.slice(INBOUND_QUEUE_PREFIX.length);
+          const purchaseId = lastSavedPurchaseIdRef.current ?? undefined;
+          setInboundInvoices((prev) => prev.filter((i) => i.id !== inboundId));
+          persist((client) => setInboundStatus(client, inboundId, 'imported', purchaseId));
+        }}
         editingPurchase={editingPurchase}
         onUpdatePurchase={handleUpdatePurchase}
         members={household.members}
@@ -1865,6 +2050,68 @@ export function HouseholdWorkspace({
         predictions={predictions}
       />
 
+      {isEmailInvoicesOpen && sb && (
+        <EmailInvoicesSheet
+          sb={sb}
+          userId={userId}
+          householdId={householdId}
+          confirmation={inboundInvoices.find((i) => i.status === 'confirmation' && i.confirmationCode) ?? null}
+          onToast={showToast}
+          onMailboxChange={setInvoiceMailbox}
+          onClose={() => setIsEmailInvoicesOpen(false)}
+        />
+      )}
+
+      {isShareListOpen && sb && (
+        <ShareListSheet
+          sb={sb}
+          userId={userId}
+          householdId={householdId}
+          householdName={household.name}
+          items={shoppingList}
+          onToast={showToast}
+          onClose={() => setIsShareListOpen(false)}
+        />
+      )}
+
+      {isSupermarketMode && (
+        <SupermarketMode
+          household={household}
+          currency={cur}
+          items={shoppingList}
+          purchases={purchases}
+          isOnline={isOnline}
+          onToggleItem={handleToggleShoppingItem}
+          onOpenScanner={() => setIsScannerOpen(true)}
+          onClose={() => setIsSupermarketMode(false)}
+        />
+      )}
+
+      {sharedText && !isLoading && (
+        <ShareImportSheet
+          text={sharedText}
+          household={household}
+          householdId={householdId}
+          memberships={memberships}
+          existingItems={shoppingList}
+          onAdd={(items) => {
+            handleAddShoppingItems(items);
+            setPendingSharedText(null);
+            setSharedText(null);
+            selectTab('shopping-list');
+            showToast(`${items.length} ${items.length === 1 ? 'producto agregado' : 'productos agregados'} a la lista`, 'success');
+          }}
+          onSwitchHousehold={(id) => {
+            // The text stays in sessionStorage; the other household's workspace reopens this sheet
+            if (id !== householdId) onSwitchHousehold(id);
+          }}
+          onClose={() => {
+            setPendingSharedText(null);
+            setSharedText(null);
+          }}
+        />
+      )}
+
       <AccountSheet
         isOpen={isAccountOpen}
         onClose={() => setIsAccountOpen(false)}
@@ -1896,6 +2143,14 @@ export function HouseholdWorkspace({
         sb={sb}
         userId={userId}
         onToast={showToast}
+        onOpenEmailInvoices={
+          isCloud && INBOUND_DOMAIN
+            ? () => {
+                setIsAccountOpen(false);
+                setIsEmailInvoicesOpen(true);
+              }
+            : undefined
+        }
       />
     </div>
   );

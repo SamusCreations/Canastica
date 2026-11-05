@@ -34,3 +34,10 @@ supabase/.branches
 
 # Local backups
 .respaldo*/
+
+# Contexto para asistentes de IA (solo local)
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+.cursorrules
+.github/copilot-instructions.md
