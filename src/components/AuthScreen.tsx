@@ -42,9 +42,17 @@ function takeOAuthErrorFromUrl(): string | null {
   const hash = new URLSearchParams(window.location.hash.replace(/^#/, ''));
   const code = query.get('error') || hash.get('error');
   if (!code) return null;
+  const description = (query.get('error_description') || hash.get('error_description') || '').toLowerCase();
   ['error', 'error_code', 'error_description'].forEach((k) => query.delete(k));
   const qs = query.toString();
   window.history.replaceState(null, '', `${window.location.pathname}${qs ? `?${qs}` : ''}`);
+  // The allowlist trigger rejects the new account: Supabase reports it as a database error
+  if (description.includes('database error saving new user') || description.includes('email_not_allowed')) {
+    return 'Tu cuenta de Google todavía no está autorizada para usar Canastica. Pídele acceso al administrador.';
+  }
+  if (description.includes('signups not allowed')) {
+    return 'Por ahora no se pueden crear cuentas nuevas.';
+  }
   return code === 'access_denied'
     ? 'Cancelaste el inicio de sesión con Google.'
     : 'No se pudo iniciar sesión con Google. Inténtalo de nuevo o usa tu correo y contraseña.';
