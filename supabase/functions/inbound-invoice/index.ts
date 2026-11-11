@@ -28,7 +28,7 @@ type Row = Record<string, unknown>;
 // Svix signature (Resend webhooks)
 // ---------------------------------------------------------------------------
 
-function base64ToBytes(b64: string): Uint8Array {
+function base64ToBytes(b64: string): Uint8Array<ArrayBuffer> {
   const bin = atob(b64);
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
@@ -143,14 +143,10 @@ function extractCode(addresses: string[], domain: string): string | null {
 const asList = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : typeof v === "string" ? [v] : []);
 
 async function handleEmail(admin: SupabaseClient, data: Row): Promise<Response> {
-  // Only addresses on this project's domain count; mail for the other environment is dropped
-  // here, before any lookup or download, and without logging anything about it.
-  const code = extractCode([...asList(data.to), ...asList(data.cc), ...asList(data.bcc)], inboundDomain());
+  // Gmail forwarding keeps the original To header; our facturas+<code>@ address only shows up in received_for.
+  // Only addresses on this project's domain count; mail for the other environment is dropped here, without logging it.
+  const code = extractCode([...asList(data.received_for), ...asList(data.to), ...asList(data.cc), ...asList(data.bcc)], inboundDomain());
   if (!code) return json({ ignored: "no_code_for_this_domain" }, 200);
-  // Gmail forwarding keeps the original To header (the user's own address); the envelope
-  // recipient (our facturas+<code>@ address) only shows up in received_for
-  const code = extractCode([...asList(data.received_for), ...asList(data.to), ...asList(data.cc), ...asList(data.bcc)]);
-  if (!code) return json({ ignored: "no_code" }, 200);
 
   const { data: mailbox } = await admin
     .from("invoice_mailboxes")
