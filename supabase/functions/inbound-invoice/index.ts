@@ -5,7 +5,12 @@
 // bucket `inbound-invoices` and a row goes to inbound_invoices for review in the app.
 //
 // Secrets: RESEND_API_KEY, RESEND_INBOUND_WEBHOOK_SECRET (whsec_...), optional
-// INBOUND_REQUIRE_PLAN=true (only households with plan 'plus'), INBOUND_DAILY_LIMIT (default 40).
+// INBOUND_REQUIRE_PLAN=true (only households with plan 'plus'), INBOUND_DAILY_LIMIT (default 40),
+// INBOUND_DOMAIN (e.g. facturas.canastica.app in prod, facturas-staging.canastica.app in staging).
+// Resend sends every email.received event of the account to every webhook, so with prod and
+// staging on one Resend account each project also gets the other's emails. INBOUND_DOMAIN makes
+// each project drop mail addressed to another domain before reading the database or downloading
+// anything, and nothing about that mail (sender, subject, address) is logged or stored.
 // Deploy with --no-verify-jwt: Resend doesn't send a Supabase JWT; the Svix signature is checked here.
 // pg_cron also calls it with x-cron-secret and {"action":"cleanup"} to delete old attachments.
 // ============================================================================
@@ -121,11 +126,16 @@ async function fetchAttachments(emailId: string): Promise<InboundAttachment[]> {
 // Handling
 // ---------------------------------------------------------------------------
 
-function extractCode(addresses: string[]): string | null {
+/** This project's receiving domain; empty = accept any domain (single-environment setups). */
+function inboundDomain(): string {
+  return (Deno.env.get("INBOUND_DOMAIN") ?? "").trim().toLowerCase().replace(/^@/, "");
+}
+
+function extractCode(addresses: string[], domain: string): string | null {
   for (const raw of addresses) {
     const address = (raw.match(/<([^>]+)>/)?.[1] ?? raw).trim().toLowerCase();
-    const m = address.match(/^[^@+]+\+([a-z0-9]{8,16})@/);
-    if (m) return m[1];
+    const m = address.match(/^[^@+]+\+([a-z0-9]{8,16})@(.+)$/);
+    if (m && (!domain || m[2] === domain)) return m[1];
   }
   return null;
 }
@@ -133,6 +143,10 @@ function extractCode(addresses: string[]): string | null {
 const asList = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : typeof v === "string" ? [v] : []);
 
 async function handleEmail(admin: SupabaseClient, data: Row): Promise<Response> {
+  // Only addresses on this project's domain count; mail for the other environment is dropped
+  // here, before any lookup or download, and without logging anything about it.
+  const code = extractCode([...asList(data.to), ...asList(data.cc), ...asList(data.bcc)], inboundDomain());
+  if (!code) return json({ ignored: "no_code_for_this_domain" }, 200);
   // Gmail forwarding keeps the original To header (the user's own address); the envelope
   // recipient (our facturas+<code>@ address) only shows up in received_for
   const code = extractCode([...asList(data.received_for), ...asList(data.to), ...asList(data.cc), ...asList(data.bcc)]);
