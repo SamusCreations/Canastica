@@ -133,7 +133,9 @@ function extractCode(addresses: string[]): string | null {
 const asList = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : typeof v === "string" ? [v] : []);
 
 async function handleEmail(admin: SupabaseClient, data: Row): Promise<Response> {
-  const code = extractCode([...asList(data.to), ...asList(data.cc), ...asList(data.bcc)]);
+  // Gmail forwarding keeps the original To header (the user's own address); the envelope
+  // recipient (our facturas+<code>@ address) only shows up in received_for
+  const code = extractCode([...asList(data.received_for), ...asList(data.to), ...asList(data.cc), ...asList(data.bcc)]);
   if (!code) return json({ ignored: "no_code" }, 200);
 
   const { data: mailbox } = await admin
