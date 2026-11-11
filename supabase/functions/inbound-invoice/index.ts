@@ -147,6 +147,10 @@ async function handleEmail(admin: SupabaseClient, data: Row): Promise<Response> 
   // here, before any lookup or download, and without logging anything about it.
   const code = extractCode([...asList(data.to), ...asList(data.cc), ...asList(data.bcc)], inboundDomain());
   if (!code) return json({ ignored: "no_code_for_this_domain" }, 200);
+  // Gmail forwarding keeps the original To header (the user's own address); the envelope
+  // recipient (our facturas+<code>@ address) only shows up in received_for
+  const code = extractCode([...asList(data.received_for), ...asList(data.to), ...asList(data.cc), ...asList(data.bcc)]);
+  if (!code) return json({ ignored: "no_code" }, 200);
 
   const { data: mailbox } = await admin
     .from("invoice_mailboxes")
