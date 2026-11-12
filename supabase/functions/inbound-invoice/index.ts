@@ -355,6 +355,11 @@ async function handleEmail(admin: SupabaseClient, data: Row): Promise<Response> 
     xml_path: xmlPath,
     response_path: responsePath,
     pdf_path: pdfPath,
+    file_names: {
+      ...(xmlPath && invoiceFile ? { factura: invoiceFile.filename } : {}),
+      ...(responsePath && responseFile ? { respuesta: responseFile.filename } : {}),
+      ...(pdfPath && pdf ? { pdf: pdf.filename } : {}),
+    },
     hacienda_status: response?.status || null,
     is_complete: isComplete,
     missing,

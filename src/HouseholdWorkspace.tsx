@@ -129,7 +129,10 @@ import { EmailInvoicesSheet } from './components/EmailInvoicesSheet';
 import {
   canAutoImport,
   claimInboundForImport,
-  inboundPdfForPurchase,
+  inboundInvoiceForPurchase,
+  inboundFiles,
+  inboundFileUrl,
+  InboundFile,
   isHaciendaRejected,
   missingText,
   getMailbox,
@@ -139,7 +142,6 @@ import {
   linkInboundPurchase,
   listInboundInvoices,
   loadInboundScan,
-  pdfUrl,
   purchaseFromScan,
   setInboundStatus,
 } from './services/inboundInvoicesService';
@@ -1096,31 +1098,32 @@ export function HouseholdWorkspace({
     persist((client) => setInboundStatus(client, invoice.id, 'rejected'));
   };
 
-  const handleOpenInboundPdf = async (invoice: InboundInvoice) => {
-    if (!sb || !invoice.pdfPath) return;
-    const url = await pdfUrl(sb, invoice.pdfPath);
-    if (url) window.open(url, '_blank', 'noopener');
-    else showToast('No se pudo abrir el PDF.');
+  const handleOpenInboundFile = async (file: InboundFile, download: boolean) => {
+    if (!sb) return;
+    const url = await inboundFileUrl(sb, file.path, download ? file.name : undefined);
+    if (!url) return showToast('No se pudo abrir el archivo.');
+    if (download) {
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = file.name;
+      a.rel = 'noopener';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } else window.open(url, '_blank', 'noopener');
   };
 
-  // PDF of the email invoice behind the purchase being viewed (null = none)
-  const [inspectedPdfPath, setInspectedPdfPath] = useState<string | null>(null);
+  // Email invoice behind the purchase being viewed (null = none)
+  const [inspectedInbound, setInspectedInbound] = useState<InboundInvoice | null>(null);
   useEffect(() => {
-    setInspectedPdfPath(null);
+    setInspectedInbound(null);
     if (!sb || !isCloud || !inspectedPurchase?.id) return;
     let active = true;
-    void inboundPdfForPurchase(sb, inspectedPurchase.id).then((path) => active && setInspectedPdfPath(path));
+    void inboundInvoiceForPurchase(sb, inspectedPurchase.id).then((inv) => active && setInspectedInbound(inv));
     return () => {
       active = false;
     };
   }, [sb, isCloud, inspectedPurchase?.id]);
-
-  const handleOpenPurchasePdf = async () => {
-    if (!sb || !inspectedPdfPath) return;
-    const url = await pdfUrl(sb, inspectedPdfPath);
-    if (url) window.open(url, '_blank', 'noopener');
-    else showToast('No se pudo abrir el PDF.');
-  };
 
   const savePurchaseRef = useRef(handleSavePurchase);
   savePurchaseRef.current = handleSavePurchase;
@@ -1751,7 +1754,7 @@ export function HouseholdWorkspace({
                 currency={cur}
                 busyId={inboundBusyId}
                 onReview={(inv) => void handleReviewInbound(inv)}
-                onOpenPdf={(inv) => void handleOpenInboundPdf(inv)}
+                onOpenFile={(f, d) => void handleOpenInboundFile(f, d)}
                 onDiscard={handleDiscardInbound}
                 onOpenSettings={() => setIsEmailInvoicesOpen(true)}
               />
@@ -2065,7 +2068,8 @@ export function HouseholdWorkspace({
           setEditingPurchase(p);
         }}
         onDelete={handleDeletePurchase}
-        onOpenInvoicePdf={inspectedPdfPath ? () => void handleOpenPurchasePdf() : undefined}
+        invoiceFiles={inspectedInbound ? inboundFiles(inspectedInbound) : undefined}
+        onOpenInvoiceFile={(f, d) => void handleOpenInboundFile(f, d)}
       />
 
       <AIAssistantDrawer
