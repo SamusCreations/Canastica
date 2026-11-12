@@ -69,11 +69,6 @@ export const isHaciendaRejected = (inv: InboundInvoice) => Boolean(inv.haciendaS
 export const canAutoImport = (inv: InboundInvoice) =>
   inv.status === 'pending' && inv.isComplete && Boolean(inv.xmlPath) && !isHaciendaRejected(inv);
 
-/** Code address: works always, but it's hard to dictate */
-export function mailboxAddress(code: string): string {
-  return `facturas+${code}@${INBOUND_DOMAIN}`;
-}
-
 export function aliasAddress(alias: string): string {
   return `${alias}@${INBOUND_DOMAIN}`;
 }
