@@ -127,7 +127,11 @@ import { PriceAlertsCard } from './components/PriceAlertsCard';
 import { InboundInvoicesCard } from './components/InboundInvoicesCard';
 import { EmailInvoicesSheet } from './components/EmailInvoicesSheet';
 import {
+  canAutoImport,
   claimInboundForImport,
+  inboundPdfForPurchase,
+  isHaciendaRejected,
+  missingText,
   getMailbox,
   INBOUND_DOMAIN,
   InboundInvoice,
@@ -1068,6 +1072,12 @@ export function HouseholdWorkspace({
   // ------------------------------------------------------------------------
   const handleReviewInbound = async (invoice: InboundInvoice) => {
     if (!sb) return;
+    // Incomplete sets (or ones Hacienda rejected) are never imported on their own: ask first
+    if (isHaciendaRejected(invoice)) {
+      if (!window.confirm('Hacienda rechazó esta factura, así que puede no ser válida. ¿La procesas igualmente?')) return;
+    } else if (!invoice.isComplete) {
+      if (!window.confirm(`Esta factura llegó incompleta. ${missingText(invoice.missing)}. ¿La procesas igualmente?`)) return;
+    }
     setInboundBusyId(invoice.id);
     try {
       const scan = await loadInboundScan(sb, invoice);
@@ -1093,6 +1103,25 @@ export function HouseholdWorkspace({
     else showToast('No se pudo abrir el PDF.');
   };
 
+  // PDF of the email invoice behind the purchase being viewed (null = none)
+  const [inspectedPdfPath, setInspectedPdfPath] = useState<string | null>(null);
+  useEffect(() => {
+    setInspectedPdfPath(null);
+    if (!sb || !isCloud || !inspectedPurchase?.id) return;
+    let active = true;
+    void inboundPdfForPurchase(sb, inspectedPurchase.id).then((path) => active && setInspectedPdfPath(path));
+    return () => {
+      active = false;
+    };
+  }, [sb, isCloud, inspectedPurchase?.id]);
+
+  const handleOpenPurchasePdf = async () => {
+    if (!sb || !inspectedPdfPath) return;
+    const url = await pdfUrl(sb, inspectedPdfPath);
+    if (url) window.open(url, '_blank', 'noopener');
+    else showToast('No se pudo abrir el PDF.');
+  };
+
   const savePurchaseRef = useRef(handleSavePurchase);
   savePurchaseRef.current = handleSavePurchase;
   const autoImportingRef = useRef(false);
@@ -1100,7 +1129,7 @@ export function HouseholdWorkspace({
   useEffect(() => {
     if (!isCloud || !sb || isLoading || !invoiceMailbox?.autoImport || autoImportingRef.current) return;
     // Each invoice is tried once per session, so one that can't be read doesn't loop
-    const candidates = inboundInvoices.filter((i) => i.status === 'pending' && i.xmlPath && !autoImportTriedRef.current.has(i.id));
+    const candidates = inboundInvoices.filter((i) => canAutoImport(i) && !autoImportTriedRef.current.has(i.id));
     if (candidates.length === 0) return;
     autoImportingRef.current = true;
     void (async () => {
@@ -2036,6 +2065,7 @@ export function HouseholdWorkspace({
           setEditingPurchase(p);
         }}
         onDelete={handleDeletePurchase}
+        onOpenInvoicePdf={inspectedPdfPath ? () => void handleOpenPurchasePdf() : undefined}
       />
 
       <AIAssistantDrawer
@@ -2055,6 +2085,7 @@ export function HouseholdWorkspace({
           sb={sb}
           userId={userId}
           householdId={householdId}
+          householdName={household.name}
           confirmation={inboundInvoices.find((i) => i.status === 'confirmation' && i.confirmationCode) ?? null}
           onToast={showToast}
           onMailboxChange={setInvoiceMailbox}

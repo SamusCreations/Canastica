@@ -12,6 +12,8 @@ interface ReceiptDetailModalProps {
   onClose: () => void;
   onEdit?: (purchase: Purchase) => void;
   onDelete?: (purchase: Purchase) => void;
+  /** Set when the purchase came from an email invoice that brought its PDF */
+  onOpenInvoicePdf?: () => void;
 }
 
 export const ReceiptDetailModal: React.FC<ReceiptDetailModalProps> = ({
@@ -21,6 +23,7 @@ export const ReceiptDetailModal: React.FC<ReceiptDetailModalProps> = ({
   onClose,
   onEdit,
   onDelete,
+  onOpenInvoicePdf,
 }) => {
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
   if (!purchase) return null;
@@ -125,6 +128,14 @@ export const ReceiptDetailModal: React.FC<ReceiptDetailModalProps> = ({
               />
             ) : (
               <p className="py-10 text-xs text-[var(--text-muted)]">Sin imagen de la factura</p>
+            )}
+            {onOpenInvoicePdf && (
+              <button
+                onClick={onOpenInvoicePdf}
+                className="mt-1 min-h-[40px] px-3 rounded-lg liquid-glass liquid-glass-interactive text-xs font-bold"
+              >
+                Ver PDF de la factura
+              </button>
             )}
           </div>
 

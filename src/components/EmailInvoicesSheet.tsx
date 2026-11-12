@@ -1,20 +1,36 @@
 import React, { useEffect, useState } from 'react';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { Copy, KeyRound, Loader2, Mail, RefreshCw, X } from 'lucide-react';
+import { Check, Copy, KeyRound, Loader2, Mail, Pencil, RefreshCw, Store, X } from 'lucide-react';
 import {
+  AliasCheck,
+  aliasAddress,
+  checkAlias,
   enableMailbox,
   getMailbox,
   InboundInvoice,
+  INBOUND_DOMAIN,
   InvoiceMailbox,
   mailboxAddress,
+  normalizeAlias,
   regenerateMailboxCode,
+  saveAlias,
+  suggestAlias,
   updateMailbox,
 } from '../services/inboundInvoicesService';
+
+const ALIAS_MESSAGE: Record<AliasCheck, string> = {
+  ok: 'Disponible',
+  mine: 'Es la de tu hogar',
+  invalid: 'Usa de 3 a 30 letras, números o guiones',
+  reserved: 'Ese nombre está reservado',
+  taken: 'Ya lo usa otro hogar',
+};
 
 interface EmailInvoicesSheetProps {
   sb: SupabaseClient;
   userId: string;
   householdId: string;
+  householdName: string;
   /** Latest Gmail confirmation received by the mailbox, if any */
   confirmation: InboundInvoice | null;
   onToast: (text: string, kind?: 'error' | 'success') => void;
@@ -27,6 +43,7 @@ export const EmailInvoicesSheet: React.FC<EmailInvoicesSheetProps> = ({
   sb,
   userId,
   householdId,
+  householdName,
   confirmation,
   onToast,
   onMailboxChange,
@@ -34,6 +51,30 @@ export const EmailInvoicesSheet: React.FC<EmailInvoicesSheetProps> = ({
 }) => {
   const [mailbox, setMailbox] = useState<InvoiceMailbox | null | undefined>(undefined);
   const [busy, setBusy] = useState(false);
+  const [editingAlias, setEditingAlias] = useState(false);
+  const [aliasDraft, setAliasDraft] = useState('');
+  const [aliasCheck, setAliasCheck] = useState<AliasCheck | 'checking' | null>(null);
+
+  // Live availability while typing (debounced)
+  useEffect(() => {
+    if (!editingAlias) return;
+    const candidate = normalizeAlias(aliasDraft);
+    if (!candidate) {
+      setAliasCheck(null);
+      return;
+    }
+    setAliasCheck('checking');
+    let active = true;
+    const timer = window.setTimeout(() => {
+      checkAlias(sb, candidate, householdId)
+        .then((r) => active && setAliasCheck(r))
+        .catch(() => active && setAliasCheck(null));
+    }, 350);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [sb, householdId, aliasDraft, editingAlias]);
 
   useEffect(() => {
     let active = true;
@@ -69,7 +110,55 @@ export const EmailInvoicesSheet: React.FC<EmailInvoicesSheetProps> = ({
   };
 
   const active = mailbox?.isActive;
-  const address = mailbox ? mailboxAddress(mailbox.code) : '';
+  const codeAddress = mailbox ? mailboxAddress(mailbox.code) : '';
+  const address = mailbox?.alias ? aliasAddress(mailbox.alias) : codeAddress;
+
+  const activate = () =>
+    run(async () => {
+      let next = await enableMailbox(sb, householdId, userId);
+      // First time: give it a readable name right away; it can be changed later
+      if (!next.alias) {
+        const suggestion = await suggestAlias(sb, householdId, householdName);
+        if (suggestion) {
+          try {
+            next = { ...next, alias: await saveAlias(sb, householdId, suggestion) };
+          } catch {
+            // keep the code address; the household can pick a name below
+          }
+        }
+      }
+      apply(next);
+    });
+
+  const startEditAlias = () => {
+    setAliasDraft(mailbox?.alias ?? normalizeAlias(householdName));
+    setEditingAlias(true);
+  };
+
+  const submitAlias = () => {
+    const candidate = normalizeAlias(aliasDraft);
+    if (!mailbox || !candidate) return;
+    if (
+      mailbox.alias &&
+      !window.confirm(
+        `Tu dirección pasará a ser ${aliasAddress(candidate)}. La anterior seguirá funcionando 30 días: cámbiala en el filtro de Gmail y en los comercios donde la diste. ¿Continuar?`
+      )
+    )
+      return;
+    setBusy(true);
+    saveAlias(sb, householdId, candidate)
+      .then((alias) => {
+        apply({ ...mailbox, alias });
+        setEditingAlias(false);
+        onToast('Dirección guardada', 'success');
+      })
+      .catch((err: Error) => {
+        const reason = err.message as AliasCheck;
+        onToast(ALIAS_MESSAGE[reason] ?? 'No se pudo guardar. Intenta de nuevo.');
+        if (reason in ALIAS_MESSAGE) setAliasCheck(reason);
+      })
+      .finally(() => setBusy(false));
+  };
 
   return (
     <div className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center">
@@ -102,7 +191,7 @@ export const EmailInvoicesSheet: React.FC<EmailInvoicesSheetProps> = ({
         ) : !active ? (
           <button
             disabled={busy}
-            onClick={() => run(async () => apply(await enableMailbox(sb, householdId, userId)))}
+            onClick={() => void activate()}
             className="w-full min-h-[48px] rounded-xl liquid-lens-btn text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-60"
           >
             {busy && <Loader2 className="w-4 h-4 animate-spin" />} Activar facturas por correo
@@ -111,15 +200,92 @@ export const EmailInvoicesSheet: React.FC<EmailInvoicesSheetProps> = ({
           <>
             <section className="liquid-glass-subtle rounded-2xl p-3 space-y-2">
               <p className="text-xs font-semibold text-[var(--text-muted)]">Tu dirección de Canastica</p>
-              <div className="flex items-center gap-2">
-                <code className="flex-1 min-w-0 truncate text-sm font-bold">{address}</code>
-                <button
-                  onClick={() => void copy(address)}
-                  className="min-h-[40px] px-3 rounded-lg liquid-glass liquid-glass-interactive text-xs font-bold flex items-center gap-1"
+              {editingAlias ? (
+                <form
+                  className="space-y-2"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    submitAlias();
+                  }}
                 >
-                  <Copy className="w-3.5 h-3.5" /> Copiar
-                </button>
-              </div>
+                  <div className="flex items-center gap-1 rounded-lg liquid-glass px-2.5 min-h-[44px]">
+                    <input
+                      autoFocus
+                      value={aliasDraft}
+                      onChange={(e) => setAliasDraft(e.target.value)}
+                      maxLength={40}
+                      autoCapitalize="none"
+                      autoCorrect="off"
+                      spellCheck={false}
+                      aria-label="Nombre de tu dirección"
+                      className="flex-1 min-w-0 bg-transparent text-sm font-bold outline-none"
+                      placeholder="rodriguez"
+                    />
+                    <span className="text-xs text-[var(--text-muted)] truncate">@{INBOUND_DOMAIN}</span>
+                  </div>
+                  <p
+                    className={`text-[11px] font-semibold ${
+                      aliasCheck === 'ok' || aliasCheck === 'mine'
+                        ? 'text-avocado-700 dark:text-avocado-400'
+                        : aliasCheck && aliasCheck !== 'checking'
+                          ? 'text-rose-600 dark:text-rose-400'
+                          : 'text-[var(--text-muted)]'
+                    }`}
+                  >
+                    {aliasCheck === 'checking'
+                      ? 'Revisando…'
+                      : aliasCheck
+                        ? `${normalizeAlias(aliasDraft)}: ${ALIAS_MESSAGE[aliasCheck]}`
+                        : 'Solo letras, números y guiones. Sin tildes ni ñ.'}
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setEditingAlias(false)}
+                      className="min-h-[40px] rounded-lg liquid-glass liquid-glass-interactive text-xs font-bold"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={busy || !(aliasCheck === 'ok' || aliasCheck === 'mine')}
+                      className="min-h-[40px] rounded-lg liquid-lens-btn text-xs font-bold flex items-center justify-center gap-1 disabled:opacity-50"
+                    >
+                      {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Guardar
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <>
+                  <div className="flex items-center gap-2">
+                    <code className="flex-1 min-w-0 break-all text-sm font-bold">{address}</code>
+                    <button
+                      onClick={() => void copy(address)}
+                      className="min-h-[40px] px-3 rounded-lg liquid-glass liquid-glass-interactive text-xs font-bold flex items-center gap-1 shrink-0"
+                    >
+                      <Copy className="w-3.5 h-3.5" /> Copiar
+                    </button>
+                  </div>
+                  <button
+                    onClick={startEditAlias}
+                    className="text-xs font-semibold text-avocado-700 dark:text-avocado-400 flex items-center gap-1 min-h-[32px]"
+                  >
+                    <Pencil className="w-3.5 h-3.5" /> {mailbox?.alias ? 'Cambiar nombre' : 'Elegir un nombre fácil de recordar'}
+                  </button>
+                  {mailbox?.alias && (
+                    <p className="text-[11px] text-[var(--text-muted)] break-all">También funciona: {codeAddress}</p>
+                  )}
+                </>
+              )}
+            </section>
+
+            <section className="rounded-2xl p-3 liquid-glass-subtle space-y-1 text-sm">
+              <p className="font-bold flex items-center gap-1.5">
+                <Store className="w-4 h-4" /> Dásela al comercio
+              </p>
+              <p className="text-xs text-[var(--text-secondary)]">
+                Cuando te pidan un correo para la factura electrónica, dicta esta dirección. Llega directo a Canastica sin pasar por tu correo.
+              </p>
             </section>
 
             {confirmation?.confirmationCode && (
@@ -141,7 +307,7 @@ export const EmailInvoicesSheet: React.FC<EmailInvoicesSheetProps> = ({
             )}
 
             <section className="space-y-2 text-sm">
-              <p className="font-bold">Configúralo en Gmail (una sola vez, desde una computadora)</p>
+              <p className="font-bold">O reenvíalas desde Gmail (una sola vez, desde una computadora)</p>
               <ol className="list-decimal list-inside space-y-1.5 text-[var(--text-secondary)]">
                 <li>
                   Gmail › <strong>Configuración</strong> › <strong>Reenvío y correo POP/IMAP</strong> › › <strong>Agregar una dirección de reenvío</strong> y
@@ -156,7 +322,10 @@ export const EmailInvoicesSheet: React.FC<EmailInvoicesSheetProps> = ({
                   Marca <strong>Reenviarlo a</strong>, elige tu dirección de Canastica y toca <strong>Crear filtro</strong>.
                 </li>
               </ol>
-              <p className="text-xs text-[var(--text-muted)]">Las facturas nuevas llegan a "Por revisar" en el Inicio. Solo se aceptan XML válidos de Hacienda (o PDF para registrar a mano).</p>
+              <p className="text-xs text-[var(--text-muted)]">
+                Cada factura electrónica trae tres archivos: el XML de la factura, el XML de respuesta de Hacienda y el PDF. Si llegan los tres y
+                Hacienda la aceptó, se puede importar sola. Si falta alguno, queda en "Por revisar" con un aviso. Correos sin factura se rechazan.
+              </p>
             </section>
 
             <label className="flex items-center gap-2.5 min-h-[44px] text-sm font-medium">
@@ -171,7 +340,7 @@ export const EmailInvoicesSheet: React.FC<EmailInvoicesSheetProps> = ({
                 }
                 className="w-5 h-5 accent-[#4f7f27]"
               />
-              Importar automáticamente las facturas XML (sin revisar)
+              Importar automáticamente las facturas completas (sin revisar)
             </label>
 
             <div className="grid grid-cols-2 gap-2">
