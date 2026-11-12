@@ -129,17 +129,18 @@ import { EmailInvoicesSheet } from './components/EmailInvoicesSheet';
 import {
   canAutoImport,
   claimInboundForImport,
-  inboundPdfForPurchase,
+  inboundInvoiceForPurchase,
+  inboundFiles,
+  inboundFileUrl,
+  InboundFile,
   isHaciendaRejected,
   missingText,
   getMailbox,
   INBOUND_DOMAIN,
   InboundInvoice,
   InvoiceMailbox,
-  linkInboundPurchase,
   listInboundInvoices,
   loadInboundScan,
-  pdfUrl,
   purchaseFromScan,
   setInboundStatus,
 } from './services/inboundInvoicesService';
@@ -405,7 +406,6 @@ export function HouseholdWorkspace({
   const [invoiceMailbox, setInvoiceMailbox] = useState<InvoiceMailbox | null>(null);
   const [isEmailInvoicesOpen, setIsEmailInvoicesOpen] = useState(false);
   const [inboundBusyId, setInboundBusyId] = useState<string | null>(null);
-  const lastSavedPurchaseIdRef = useRef<string | null>(null);
 
   // Toast feedback
   const [toast, setToast] = useState<{ kind: 'error' | 'success'; text: string } | null>(null);
@@ -820,10 +820,13 @@ export function HouseholdWorkspace({
   const handleSavePurchase = (scanned: Purchase) => {
     // Fresh UUIDs so rows are valid for Postgres and stable across devices
     const purchaseId = newId();
-    lastSavedPurchaseIdRef.current = purchaseId;
+    const reviewedInbound = queuedReview?.id.startsWith(INBOUND_QUEUE_PREFIX)
+      ? queuedReview.id.slice(INBOUND_QUEUE_PREFIX.length)
+      : undefined;
     const newPurchase: Purchase = {
       ...scanned,
       id: purchaseId,
+      inboundInvoiceId: scanned.inboundInvoiceId ?? reviewedInbound,
       householdId: householdId || scanned.householdId,
       items: scanned.items.map((it) => ({ ...it, id: newId(), purchaseId })),
     };
@@ -1096,31 +1099,33 @@ export function HouseholdWorkspace({
     persist((client) => setInboundStatus(client, invoice.id, 'rejected'));
   };
 
-  const handleOpenInboundPdf = async (invoice: InboundInvoice) => {
-    if (!sb || !invoice.pdfPath) return;
-    const url = await pdfUrl(sb, invoice.pdfPath);
-    if (url) window.open(url, '_blank', 'noopener');
-    else showToast('No se pudo abrir el PDF.');
+  const handleOpenInboundFile = async (file: InboundFile, download: boolean) => {
+    if (!sb) return;
+    const url = await inboundFileUrl(sb, file.path, download ? file.name : undefined);
+    if (!url) return showToast('No se pudo abrir el archivo.');
+    if (download) {
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = file.name;
+      a.rel = 'noopener';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } else window.open(url, '_blank', 'noopener');
   };
 
-  // PDF of the email invoice behind the purchase being viewed (null = none)
-  const [inspectedPdfPath, setInspectedPdfPath] = useState<string | null>(null);
+  // Email invoice behind the purchase being viewed (null = none)
+  const [inspectedInbound, setInspectedInbound] = useState<InboundInvoice | null>(null);
   useEffect(() => {
-    setInspectedPdfPath(null);
-    if (!sb || !isCloud || !inspectedPurchase?.id) return;
+    setInspectedInbound(null);
+    const inboundId = inspectedPurchase?.inboundInvoiceId;
+    if (!sb || !isCloud || !inboundId) return;
     let active = true;
-    void inboundPdfForPurchase(sb, inspectedPurchase.id).then((path) => active && setInspectedPdfPath(path));
+    void inboundInvoiceForPurchase(sb, inboundId).then((inv) => active && setInspectedInbound(inv));
     return () => {
       active = false;
     };
-  }, [sb, isCloud, inspectedPurchase?.id]);
-
-  const handleOpenPurchasePdf = async () => {
-    if (!sb || !inspectedPdfPath) return;
-    const url = await pdfUrl(sb, inspectedPdfPath);
-    if (url) window.open(url, '_blank', 'noopener');
-    else showToast('No se pudo abrir el PDF.');
-  };
+  }, [sb, isCloud, inspectedPurchase?.inboundInvoiceId]);
 
   const savePurchaseRef = useRef(handleSavePurchase);
   savePurchaseRef.current = handleSavePurchase;
@@ -1138,9 +1143,7 @@ export function HouseholdWorkspace({
         autoImportTriedRef.current.add(invoice.id);
         const scan = await loadInboundScan(sb, invoice);
         if (!scan || !(await claimInboundForImport(sb, invoice.id))) continue;
-        savePurchaseRef.current(purchaseFromScan(scan.result, scan.dataUrl, baseHousehold.supermarkets, currentMemberId));
-        const purchaseId = lastSavedPurchaseIdRef.current;
-        if (purchaseId) await linkInboundPurchase(sb, invoice.id, purchaseId);
+        savePurchaseRef.current(purchaseFromScan(scan.result, scan.dataUrl, baseHousehold.supermarkets, currentMemberId, invoice.id));
         importedIds.add(invoice.id);
       }
       const imported = importedIds.size;
@@ -1751,7 +1754,7 @@ export function HouseholdWorkspace({
                 currency={cur}
                 busyId={inboundBusyId}
                 onReview={(inv) => void handleReviewInbound(inv)}
-                onOpenPdf={(inv) => void handleOpenInboundPdf(inv)}
+                onOpenFile={(f, d) => void handleOpenInboundFile(f, d)}
                 onDiscard={handleDiscardInbound}
                 onOpenSettings={() => setIsEmailInvoicesOpen(true)}
               />
@@ -2038,9 +2041,9 @@ export function HouseholdWorkspace({
           // Invoice received by email and approved by the user
           if (!queueId.startsWith(INBOUND_QUEUE_PREFIX) || !sb) return;
           const inboundId = queueId.slice(INBOUND_QUEUE_PREFIX.length);
-          const purchaseId = lastSavedPurchaseIdRef.current ?? undefined;
           setInboundInvoices((prev) => prev.filter((i) => i.id !== inboundId));
-          persist((client) => setInboundStatus(client, inboundId, 'imported', purchaseId));
+          // The purchase itself carries the link (inbound_invoice_id), set in its insert
+          persist((client) => setInboundStatus(client, inboundId, 'imported'));
         }}
         editingPurchase={editingPurchase}
         onUpdatePurchase={handleUpdatePurchase}
@@ -2065,7 +2068,8 @@ export function HouseholdWorkspace({
           setEditingPurchase(p);
         }}
         onDelete={handleDeletePurchase}
-        onOpenInvoicePdf={inspectedPdfPath ? () => void handleOpenPurchasePdf() : undefined}
+        invoiceFiles={inspectedInbound ? inboundFiles(inspectedInbound) : undefined}
+        onOpenInvoiceFile={(f, d) => void handleOpenInboundFile(f, d)}
       />
 
       <AIAssistantDrawer

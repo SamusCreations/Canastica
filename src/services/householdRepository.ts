@@ -186,6 +186,7 @@ function mapPurchase(row: Row, imageUrl: string): Purchase {
     totalAmount: num(row.total_amount),
     receiptImageUrl: imageUrl,
     notes: orUndefined(row.notes),
+    inboundInvoiceId: orUndefined(row.inbound_invoice_id),
     items: items
       .slice()
       .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)))
@@ -602,6 +603,7 @@ export async function insertPurchase(
     total_amount: purchase.totalAmount,
     receipt_image_path: imagePath,
     notes: purchase.notes ?? null,
+    ...(purchase.inboundInvoiceId ? { inbound_invoice_id: purchase.inboundInvoiceId } : {}),
   });
   throwIfError(error, 'Guardando factura');
 

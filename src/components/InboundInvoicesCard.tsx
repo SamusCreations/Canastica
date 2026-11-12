@@ -1,6 +1,7 @@
 import React from 'react';
 import { AlertTriangle, FileText, Inbox, Loader2 } from 'lucide-react';
-import { InboundInvoice, isHaciendaRejected, missingText } from '../services/inboundInvoicesService';
+import { InboundFile, InboundInvoice, inboundFiles, isHaciendaRejected, missingText } from '../services/inboundInvoicesService';
+import { InvoiceFilesList } from './InvoiceFilesList';
 import { CurrencyCode } from '../types/grocery';
 import { formatCurrency } from '../utils/formatters';
 
@@ -9,7 +10,7 @@ interface InboundInvoicesCardProps {
   currency: CurrencyCode;
   busyId: string | null;
   onReview: (invoice: InboundInvoice) => void;
-  onOpenPdf: (invoice: InboundInvoice) => void;
+  onOpenFile: (file: InboundFile, download: boolean) => void;
   onDiscard: (invoice: InboundInvoice) => void;
   onOpenSettings: () => void;
 }
@@ -22,7 +23,7 @@ export const InboundInvoicesCard: React.FC<InboundInvoicesCardProps> = ({
   currency,
   busyId,
   onReview,
-  onOpenPdf,
+  onOpenFile,
   onDiscard,
   onOpenSettings,
 }) => {
@@ -68,15 +69,8 @@ export const InboundInvoicesCard: React.FC<InboundInvoicesCardProps> = ({
                   <p className="text-[11px] font-semibold text-amber-700 dark:text-amber-300">Incompleta: {missingText(inv.missing).toLowerCase()}</p>
                 )
               )}
+              <InvoiceFilesList files={inboundFiles(inv)} onOpen={onOpenFile} compact />
             </div>
-            {inv.pdfPath && (
-              <button
-                onClick={() => onOpenPdf(inv)}
-                className="min-h-[36px] px-2.5 rounded-lg liquid-glass liquid-glass-interactive text-xs font-bold shrink-0"
-              >
-                PDF
-              </button>
-            )}
             {inv.xmlPath && (
               <button
                 onClick={() => onReview(inv)}

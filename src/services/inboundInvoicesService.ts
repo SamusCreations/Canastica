@@ -39,6 +39,8 @@ export interface InboundInvoice {
   xmlPath: string | null;
   responsePath: string | null;
   pdfPath: string | null;
+  /** Original attachment names, to download them as they arrived */
+  fileNames: Partial<Record<InboundPart, string>>;
   /** What Hacienda answered ("aceptado", "rechazado"…), from its response XML */
   haciendaStatus: string | null;
   /** Invoice XML + Hacienda response + PDF all arrived */
@@ -206,6 +208,7 @@ function mapInbound(r: Record<string, unknown>): InboundInvoice {
     xmlPath: (r.xml_path as string | null) ?? null,
     responsePath: (r.response_path as string | null) ?? null,
     pdfPath: (r.pdf_path as string | null) ?? null,
+    fileNames: r.file_names && typeof r.file_names === 'object' ? (r.file_names as Partial<Record<InboundPart, string>>) : {},
     haciendaStatus: (r.hacienda_status as string | null) ?? null,
     isComplete: Boolean(r.is_complete),
     missing: Array.isArray(r.missing) ? (r.missing as InboundPart[]) : [],
@@ -257,25 +260,38 @@ export async function claimInboundForImport(sb: SupabaseClient, id: string): Pro
   return !error && (data?.length ?? 0) > 0;
 }
 
-export async function linkInboundPurchase(sb: SupabaseClient, id: string, purchaseId: string): Promise<void> {
-  await sb.from('inbound_invoices').update({ purchase_id: purchaseId }).eq('id', id);
+export interface InboundFile {
+  part: InboundPart;
+  label: string;
+  path: string;
+  name: string;
 }
 
-export async function pdfUrl(sb: SupabaseClient, path: string): Promise<string | null> {
-  const { data } = await sb.storage.from(BUCKET).createSignedUrl(path, 600);
+const FILE_LABEL: Record<InboundPart, string> = { factura: 'Factura (XML)', respuesta: 'Respuesta de Hacienda (XML)', pdf: 'PDF' };
+
+/** The original files stored for an email invoice, in a fixed order. */
+export function inboundFiles(invoice: InboundInvoice): InboundFile[] {
+  const base = invoice.clave ?? invoice.id;
+  const entries: [InboundPart, string | null, string][] = [
+    ['factura', invoice.xmlPath, `${base}.xml`],
+    ['respuesta', invoice.responsePath, `${base}_respuesta.xml`],
+    ['pdf', invoice.pdfPath, `${base}.pdf`],
+  ];
+  return entries
+    .filter(([, path]) => !!path)
+    .map(([part, path, fallback]) => ({ part, label: FILE_LABEL[part], path: path!, name: invoice.fileNames[part] || fallback }));
+}
+
+/** Signed link to a stored file; with `downloadName` the browser saves it under that name. */
+export async function inboundFileUrl(sb: SupabaseClient, path: string, downloadName?: string): Promise<string | null> {
+  const { data } = await sb.storage.from(BUCKET).createSignedUrl(path, 600, downloadName ? { download: downloadName } : undefined);
   return data?.signedUrl ?? null;
 }
 
-/** PDF of the email invoice a purchase was imported from, if it had one */
-export async function inboundPdfForPurchase(sb: SupabaseClient, purchaseId: string): Promise<string | null> {
-  const { data, error } = await sb
-    .from('inbound_invoices')
-    .select('pdf_path')
-    .eq('purchase_id', purchaseId)
-    .not('pdf_path', 'is', null)
-    .limit(1)
-    .maybeSingle();
-  return error || !data ? null : (data.pdf_path as string);
+/** Email invoice a purchase was imported from, if any */
+export async function inboundInvoiceForPurchase(sb: SupabaseClient, inboundInvoiceId: string): Promise<InboundInvoice | null> {
+  const { data, error } = await sb.from('inbound_invoices').select('*').eq('id', inboundInvoiceId).maybeSingle();
+  return error || !data ? null : mapInbound(data as Record<string, unknown>);
 }
 
 /** Downloads and reads the XML in the browser with the same parser as manual uploads. */
@@ -302,7 +318,8 @@ export function purchaseFromScan(
   result: ScannedReceiptResult,
   dataUrl: string,
   supermarkets: SupermarketStore[],
-  memberId: string
+  memberId: string,
+  inboundInvoiceId?: string
 ): Purchase {
   const scannedStore = fold(result.supermarket || '');
   const known = scannedStore
@@ -345,6 +362,7 @@ export function purchaseFromScan(
     totalAmount: result.receiptTotal || itemsTotal,
     notes: 'Importada por correo',
     receiptImageUrl: dataUrl,
+    ...(inboundInvoiceId ? { inboundInvoiceId } : {}),
     items,
   };
 }
