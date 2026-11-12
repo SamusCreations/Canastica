@@ -1,8 +1,12 @@
 // ============================================================================
 // Edge Function `inbound-invoice`: webhook for Resend Inbound ("email.received").
-// Users forward their electronic invoices to facturas+<code>@<INBOUND_DOMAIN>; the code
-// after "+" identifies the household. The XML (and PDF, if any) is stored in the private
-// bucket `inbound-invoices` and a row goes to inbound_invoices for review in the app.
+// Invoices reach <alias>@<INBOUND_DOMAIN> (the household's readable name, which can be given
+// straight to a store) or the older facturas+<code>@<INBOUND_DOMAIN>. A Costa Rican e-invoice
+// email carries three files: the invoice XML, Hacienda's response XML (MensajeHacienda) and the
+// PDF. All three are stored in the private bucket `inbound-invoices` and a row goes to
+// inbound_invoices. Only a complete set accepted by Hacienda is imported automatically; an
+// incomplete one waits for review with a warning, and an email with no invoice data is
+// recorded as an error (the app tells the household) and nothing is stored.
 //
 // Secrets: RESEND_API_KEY, RESEND_INBOUND_WEBHOOK_SECRET (whsec_...), optional
 // INBOUND_REQUIRE_PLAN=true (only households with plan 'plus'), INBOUND_DAILY_LIMIT (default 40),
@@ -72,6 +76,30 @@ function tag(xml: string, name: string): string {
   return m ? m[1].trim() : "";
 }
 
+const RESPONSE_ROOT = /<(?:\w+:)?MensajeHacienda[\s>]/;
+
+interface HaciendaResponse {
+  clave: string;
+  status: string; // "aceptado" | "rechazado" | whatever Hacienda wrote, lowercased
+  issuer: string;
+  total: number;
+}
+
+function readResponseXml(xml: string): HaciendaResponse | null {
+  if (!RESPONSE_ROOT.test(xml)) return null;
+  const clave = tag(xml, "Clave");
+  if (!/^\d{50}$/.test(clave)) return null;
+  return {
+    clave,
+    status: tag(xml, "EstadoMensaje").toLowerCase().slice(0, 40),
+    issuer: tag(xml, "NombreEmisor").slice(0, 120),
+    total: Number(tag(xml, "TotalFactura").replace(",", ".")) || 0,
+  };
+}
+
+/** The 50-digit key many systems use as the PDF's file name */
+const claveInName = (filename: string): string | null => filename.match(/(?<!\d)(\d{50})(?!\d)/)?.[1] ?? null;
+
 function readInvoiceXml(xml: string): { clave: string; issuer: string; total: number; issuedAt: string | null } | null {
   if (!INVOICE_ROOT.test(xml)) return null; // e.g. Hacienda's MensajeHacienda response, not the invoice
   const clave = tag(xml, "Clave");
@@ -105,21 +133,32 @@ async function resendGet(path: string): Promise<Row | null> {
   return (await res.json()) as Row;
 }
 
-async function fetchAttachments(emailId: string): Promise<InboundAttachment[]> {
+/**
+ * XML and PDF attachments of a received email, plus how many other files it had.
+ * Null when Resend's API can't be read (e.g. a sending-only API key): the caller answers 500
+ * so Resend retries, instead of recording a valid invoice as "no invoice".
+ */
+async function fetchAttachments(emailId: string): Promise<{ files: InboundAttachment[]; others: number } | null> {
   const list = await resendGet(`/emails/receiving/${encodeURIComponent(emailId)}/attachments`);
-  const items = (Array.isArray(list?.data) ? list?.data : []) as Row[];
-  const out: InboundAttachment[] = [];
+  if (!list) return null;
+  const items = (Array.isArray(list.data) ? list.data : []) as Row[];
+  const files: InboundAttachment[] = [];
+  let others = 0;
   for (const a of items) {
     const filename = String(a.filename ?? "adjunto");
     const contentType = String(a.content_type ?? "");
     const wanted = /\.(xml|pdf)$/i.test(filename) || /xml|pdf/i.test(contentType);
-    if (!wanted || Number(a.size ?? 0) > MAX_ATTACHMENT_BYTES || typeof a.download_url !== "string") continue;
+    if (!wanted) {
+      if (!/^inline$/i.test(String(a.content_disposition ?? ""))) others++; // logos in the body don't count
+      continue;
+    }
+    if (Number(a.size ?? 0) > MAX_ATTACHMENT_BYTES || typeof a.download_url !== "string") continue;
     const res = await fetch(a.download_url, { signal: AbortSignal.timeout(20_000) });
     if (!res.ok) continue;
     const bytes = new Uint8Array(await res.arrayBuffer());
-    if (bytes.length <= MAX_ATTACHMENT_BYTES) out.push({ filename, contentType, bytes });
+    if (bytes.length <= MAX_ATTACHMENT_BYTES) files.push({ filename, contentType, bytes });
   }
-  return out;
+  return { files, others };
 }
 
 // ---------------------------------------------------------------------------
@@ -131,11 +170,47 @@ function inboundDomain(): string {
   return (Deno.env.get("INBOUND_DOMAIN") ?? "").trim().toLowerCase().replace(/^@/, "");
 }
 
-function extractCode(addresses: string[], domain: string): string | null {
+/** Local parts (before the @) of the addresses on this project's domain, in order. */
+function localParts(addresses: string[], domain: string): string[] {
+  const out: string[] = [];
   for (const raw of addresses) {
     const address = (raw.match(/<([^>]+)>/)?.[1] ?? raw).trim().toLowerCase();
-    const m = address.match(/^[^@+]+\+([a-z0-9]{8,16})@(.+)$/);
-    if (m && (!domain || m[2] === domain)) return m[1];
+    const m = address.match(/^([^@\s]+)@([^@\s]+)$/);
+    if (m && (!domain || m[2] === domain) && !out.includes(m[1])) out.push(m[1]);
+  }
+  return out;
+}
+
+/**
+ * Household that owns one of the addresses: facturas+<code>, <alias> (hyphens, dots and
+ * underscores ignored, so a cashier who drops a hyphen still gets it right) or a bare <code>.
+ */
+async function findMailbox(admin: SupabaseClient, locals: string[]): Promise<Row | null> {
+  const select = "household_id, is_active, households(plan)";
+  for (const local of locals) {
+    const plus = local.match(/^[^+]+\+([a-z0-9]{8,16})$/);
+    if (plus) {
+      const { data } = await admin.from("invoice_mailboxes").select(select).eq("code", plus[1]).maybeSingle();
+      if (data) return data as Row;
+      continue;
+    }
+    const key = local.replace(/[-._]/g, "");
+    if (!/^[a-z0-9]{3,30}$/.test(key)) continue;
+    const { data: alias } = await admin
+      .from("invoice_mailbox_aliases")
+      .select("household_id")
+      .eq("alias_key", key)
+      .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
+      .maybeSingle();
+    if (alias) {
+      const { data } = await admin.from("invoice_mailboxes").select(select).eq("household_id", alias.household_id).maybeSingle();
+      if (data) return data as Row;
+      continue;
+    }
+    if (/^[a-z0-9]{8,16}$/.test(local)) {
+      const { data } = await admin.from("invoice_mailboxes").select(select).eq("code", local).maybeSingle();
+      if (data) return data as Row;
+    }
   }
   return null;
 }
@@ -145,14 +220,10 @@ const asList = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : typ
 async function handleEmail(admin: SupabaseClient, data: Row): Promise<Response> {
   // Gmail forwarding keeps the original To header; our facturas+<code>@ address only shows up in received_for.
   // Only addresses on this project's domain count; mail for the other environment is dropped here, without logging it.
-  const code = extractCode([...asList(data.received_for), ...asList(data.to), ...asList(data.cc), ...asList(data.bcc)], inboundDomain());
-  if (!code) return json({ ignored: "no_code_for_this_domain" }, 200);
+  const locals = localParts([...asList(data.received_for), ...asList(data.to), ...asList(data.cc), ...asList(data.bcc)], inboundDomain());
+  if (locals.length === 0) return json({ ignored: "no_code_for_this_domain" }, 200);
 
-  const { data: mailbox } = await admin
-    .from("invoice_mailboxes")
-    .select("household_id, is_active, households(plan)")
-    .eq("code", code)
-    .maybeSingle();
+  const mailbox = await findMailbox(admin, locals);
   if (!mailbox || !mailbox.is_active) return json({ ignored: "unknown_mailbox" }, 200);
   const householdId = String(mailbox.household_id);
   const plan = String((mailbox.households as Row | null)?.plan ?? "free");
@@ -183,74 +254,115 @@ async function handleEmail(admin: SupabaseClient, data: Row): Promise<Response> 
     return json({ ok: "confirmation" }, 200);
   }
 
-  const attachments = data.email_id ? await fetchAttachments(String(data.email_id)) : [];
+  const fetched = data.email_id ? await fetchAttachments(String(data.email_id)) : { files: [], others: 0 };
+  if (!fetched) return json({ error: "attachments_unavailable" }, 500); // Resend retries
+
+  // Sort the files: invoice XML, Hacienda's response XML, PDF
   const decoder = new TextDecoder();
   let invoice: ReturnType<typeof readInvoiceXml> = null;
-  let xmlAttachment: InboundAttachment | null = null;
-  for (const a of attachments.filter((x) => /\.xml$/i.test(x.filename) || /xml/i.test(x.contentType))) {
-    const parsed = readInvoiceXml(decoder.decode(a.bytes));
-    if (parsed) {
-      invoice = parsed;
-      xmlAttachment = a;
-      break;
+  let invoiceFile: InboundAttachment | null = null;
+  let response: HaciendaResponse | null = null;
+  let responseFile: InboundAttachment | null = null;
+  const pdfs: InboundAttachment[] = [];
+  for (const a of fetched.files) {
+    if (/\.pdf$/i.test(a.filename) || /pdf/i.test(a.contentType)) {
+      pdfs.push(a);
+      continue;
+    }
+    const xml = decoder.decode(a.bytes);
+    if (!invoice) {
+      const parsed = readInvoiceXml(xml);
+      if (parsed) {
+        invoice = parsed;
+        invoiceFile = a;
+        continue;
+      }
+    }
+    if (!response) {
+      const parsed = readResponseXml(xml);
+      if (parsed) {
+        response = parsed;
+        responseFile = a;
+      }
     }
   }
-  const pdf = attachments.find((x) => /\.pdf$/i.test(x.filename) || /pdf/i.test(x.contentType)) ?? null;
+  const clave = invoice?.clave ?? response?.clave ?? pdfs.map((p) => claveInName(p.filename)).find(Boolean) ?? null;
+  // A response for another invoice doesn't count
+  if (response && invoice && response.clave !== invoice.clave) {
+    response = null;
+    responseFile = null;
+  }
+  // Prefer the PDF named after this invoice's key; a PDF alone must carry the key in its name
+  const pdf =
+    pdfs.find((p) => clave && claveInName(p.filename) === clave) ??
+    (invoice || response ? pdfs.find((p) => !claveInName(p.filename)) : undefined) ??
+    null;
 
   const id = crypto.randomUUID();
-  // Only real Hacienda invoices are accepted (a PDF alone is kept for manual review)
-  if (!invoice && !pdf) {
+  if (!invoice && !response && !pdf) {
+    // Nothing that looks like an e-invoice: recorded only so the app can tell the household
+    const detail = fetched.files.length + fetched.others === 0
+      ? "El correo no traía archivos adjuntos"
+      : "Los adjuntos no son una factura electrónica (se necesitan el XML y el PDF de Hacienda)";
     await admin.from("inbound_invoices").insert({
       id,
       household_id: householdId,
       sender,
       subject,
       status: "error",
-      error_detail: "Sin XML de factura electrónica ni PDF",
+      error_detail: detail,
       processed_at: new Date().toISOString(),
     });
     return json({ ok: "no_invoice" }, 200);
   }
 
+  const missing = [!invoice && "factura", !response && "respuesta", !pdf && "pdf"].filter((m): m is string => Boolean(m));
+  const isComplete = missing.length === 0;
+
   let status: "pending" | "duplicate" = "pending";
-  if (invoice) {
+  if (clave) {
     const { data: existing } = await admin
       .from("inbound_invoices")
       .select("id")
       .eq("household_id", householdId)
-      .eq("clave", invoice.clave)
+      .eq("clave", clave)
       .neq("status", "duplicate")
       .limit(1);
     if (existing && existing.length > 0) status = "duplicate";
   }
 
-  let xmlPath: string | null = null;
-  let pdfPath: string | null = null;
-  if (status === "pending") {
-    if (xmlAttachment) {
-      xmlPath = `${householdId}/${id}.xml`;
-      const { error } = await admin.storage.from(BUCKET).upload(xmlPath, xmlAttachment.bytes, { contentType: "application/xml" });
-      if (error) xmlPath = null;
-    }
-    if (pdf) {
-      pdfPath = `${householdId}/${id}.pdf`;
-      const { error } = await admin.storage.from(BUCKET).upload(pdfPath, pdf.bytes, { contentType: "application/pdf" });
-      if (error) pdfPath = null;
-    }
-  }
+  const store = async (file: InboundAttachment | null, suffix: string, contentType: string): Promise<string | null> => {
+    if (!file || status !== "pending") return null;
+    const path = `${householdId}/${id}${suffix}`;
+    const { error } = await admin.storage.from(BUCKET).upload(path, file.bytes, { contentType });
+    if (error) console.error("inbound upload", suffix, error.message);
+    return error ? null : path;
+  };
+  const xmlPath = await store(invoiceFile, ".xml", "application/xml");
+  const responsePath = await store(responseFile, "-respuesta.xml", "application/xml");
+  const pdfPath = await store(pdf, ".pdf", "application/pdf");
 
   const { error: insertError } = await admin.from("inbound_invoices").insert({
     id,
     household_id: householdId,
     sender,
     subject,
-    clave: invoice?.clave ?? null,
-    issuer: invoice?.issuer ?? null,
-    total: invoice?.total ?? null,
+    clave,
+    issuer: invoice?.issuer || response?.issuer || null,
+    total: invoice?.total || response?.total || null,
     issued_at: invoice?.issuedAt ?? null,
     status,
     xml_path: xmlPath,
+    response_path: responsePath,
     pdf_path: pdfPath,
+    file_names: {
+      ...(xmlPath && invoiceFile ? { factura: invoiceFile.filename } : {}),
+      ...(responsePath && responseFile ? { respuesta: responseFile.filename } : {}),
+      ...(pdfPath && pdf ? { pdf: pdf.filename } : {}),
+    },
+    hacienda_status: response?.status || null,
+    is_complete: isComplete,
+    missing,
   });
   if (insertError) {
     console.error("inbound insert", insertError.message);
@@ -258,32 +370,37 @@ async function handleEmail(admin: SupabaseClient, data: Row): Promise<Response> 
   }
 
   if (status === "pending") {
+    const issuer = invoice?.issuer || response?.issuer || "";
+    const total = invoice?.total || response?.total || 0;
     const recipients = await householdMemberIds(admin, householdId);
     await sendPushToUsers(admin, recipients, "inbound_invoices", {
-      title: "Factura nueva por correo",
-      body: invoice ? `${invoice.issuer || "Factura"}${invoice.total ? ` · ₡${Math.round(invoice.total).toLocaleString("es-CR")}` : ""}` : subject || "Revisa la factura recibida",
+      title: isComplete ? "Factura nueva por correo" : "Factura incompleta por correo",
+      body: `${issuer || subject || "Revisa la factura recibida"}${total ? ` · ₡${Math.round(total).toLocaleString("es-CR")}` : ""}`,
       url: "/?tab=dashboard",
       tag: `inbound-${householdId}`,
     });
   }
-  return json({ ok: status }, 200);
+  return json({ ok: status, complete: isComplete, missing }, 200);
 }
 
 async function cleanup(admin: SupabaseClient) {
   const cutoff = new Date(Date.now() - RETENTION_DAYS * 86_400_000).toISOString();
   const { data: old } = await admin
     .from("inbound_invoices")
-    .select("id, xml_path, pdf_path")
-    .in("status", ["imported", "rejected", "duplicate", "error"])
+    .select("id, xml_path, response_path, pdf_path")
+    // Imported invoices keep their files: the purchase shows the PDF and XML
+    .in("status", ["rejected", "duplicate", "error"])
     .lt("received_at", cutoff)
-    .or("xml_path.not.is.null,pdf_path.not.is.null")
+    .or("xml_path.not.is.null,response_path.not.is.null,pdf_path.not.is.null")
     .limit(500);
-  const paths = ((old ?? []) as Row[]).flatMap((r) => [r.xml_path, r.pdf_path]).filter((p): p is string => typeof p === "string");
+  const paths = ((old ?? []) as Row[])
+    .flatMap((r) => [r.xml_path, r.response_path, r.pdf_path])
+    .filter((p): p is string => typeof p === "string");
   if (paths.length) await admin.storage.from(BUCKET).remove(paths);
   if (old?.length) {
     await admin
       .from("inbound_invoices")
-      .update({ xml_path: null, pdf_path: null })
+      .update({ xml_path: null, response_path: null, pdf_path: null })
       .in("id", (old as Row[]).map((r) => String(r.id)));
   }
   return { removed: paths.length };

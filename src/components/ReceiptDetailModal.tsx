@@ -4,6 +4,8 @@ import { Calendar, Pencil, Store, Tag, Trash2, User, Users, X } from 'lucide-rea
 import { CurrencyCode, HouseholdMember, Purchase } from '../types/grocery';
 import { formatCurrency } from '../utils/formatters';
 import { Avatar } from './Avatar';
+import { InboundFile } from '../services/inboundInvoicesService';
+import { InvoiceFilesList } from './InvoiceFilesList';
 
 interface ReceiptDetailModalProps {
   purchase: Purchase | null;
@@ -12,6 +14,9 @@ interface ReceiptDetailModalProps {
   onClose: () => void;
   onEdit?: (purchase: Purchase) => void;
   onDelete?: (purchase: Purchase) => void;
+  /** Original files of the email invoice the purchase was imported from */
+  invoiceFiles?: InboundFile[];
+  onOpenInvoiceFile?: (file: InboundFile, download: boolean) => void;
 }
 
 export const ReceiptDetailModal: React.FC<ReceiptDetailModalProps> = ({
@@ -21,6 +26,8 @@ export const ReceiptDetailModal: React.FC<ReceiptDetailModalProps> = ({
   onClose,
   onEdit,
   onDelete,
+  invoiceFiles,
+  onOpenInvoiceFile,
 }) => {
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
   if (!purchase) return null;
@@ -125,6 +132,12 @@ export const ReceiptDetailModal: React.FC<ReceiptDetailModalProps> = ({
               />
             ) : (
               <p className="py-10 text-xs text-[var(--text-muted)]">Sin imagen de la factura</p>
+            )}
+            {invoiceFiles && invoiceFiles.length > 0 && onOpenInvoiceFile && (
+              <div className="w-full mt-2">
+                <span className="text-xs font-semibold text-[var(--text-secondary)]">Archivos originales del correo</span>
+                <InvoiceFilesList files={invoiceFiles} onOpen={onOpenInvoiceFile} />
+              </div>
             )}
           </div>
 

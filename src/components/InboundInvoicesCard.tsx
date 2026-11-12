@@ -1,6 +1,7 @@
 import React from 'react';
 import { AlertTriangle, FileText, Inbox, Loader2 } from 'lucide-react';
-import type { InboundInvoice } from '../services/inboundInvoicesService';
+import { InboundFile, InboundInvoice, inboundFiles, isHaciendaRejected, missingText } from '../services/inboundInvoicesService';
+import { InvoiceFilesList } from './InvoiceFilesList';
 import { CurrencyCode } from '../types/grocery';
 import { formatCurrency } from '../utils/formatters';
 
@@ -9,7 +10,7 @@ interface InboundInvoicesCardProps {
   currency: CurrencyCode;
   busyId: string | null;
   onReview: (invoice: InboundInvoice) => void;
-  onOpenPdf: (invoice: InboundInvoice) => void;
+  onOpenFile: (file: InboundFile, download: boolean) => void;
   onDiscard: (invoice: InboundInvoice) => void;
   onOpenSettings: () => void;
 }
@@ -22,7 +23,7 @@ export const InboundInvoicesCard: React.FC<InboundInvoicesCardProps> = ({
   currency,
   busyId,
   onReview,
-  onOpenPdf,
+  onOpenFile,
   onDiscard,
   onOpenSettings,
 }) => {
@@ -60,23 +61,23 @@ export const InboundInvoicesCard: React.FC<InboundInvoicesCardProps> = ({
               <p className="text-[11px] text-[var(--text-muted)]">
                 {inv.total != null && `${formatCurrency(inv.total, currency)} · `}
                 {dateFormat.format(new Date(inv.issuedAt ? `${inv.issuedAt}T12:00:00` : inv.receivedAt))}
-                {!inv.xmlPath && inv.pdfPath && ' · solo PDF'}
               </p>
+              {isHaciendaRejected(inv) ? (
+                <p className="text-[11px] font-semibold text-rose-600 dark:text-rose-400">Hacienda rechazó esta factura</p>
+              ) : (
+                !inv.isComplete && (
+                  <p className="text-[11px] font-semibold text-amber-700 dark:text-amber-300">Incompleta: {missingText(inv.missing).toLowerCase()}</p>
+                )
+              )}
+              <InvoiceFilesList files={inboundFiles(inv)} onOpen={onOpenFile} compact />
             </div>
-            {inv.xmlPath ? (
+            {inv.xmlPath && (
               <button
                 onClick={() => onReview(inv)}
                 disabled={busyId === inv.id}
                 className="min-h-[36px] px-3 rounded-lg liquid-lens-btn text-xs font-bold flex items-center gap-1 shrink-0"
               >
                 {busyId === inv.id && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Revisar
-              </button>
-            ) : (
-              <button
-                onClick={() => onOpenPdf(inv)}
-                className="min-h-[36px] px-3 rounded-lg liquid-glass liquid-glass-interactive text-xs font-bold shrink-0"
-              >
-                Ver PDF
               </button>
             )}
             <button
@@ -92,7 +93,10 @@ export const InboundInvoicesCard: React.FC<InboundInvoicesCardProps> = ({
       {errors.length > 0 && (
         <p className="text-[11px] text-amber-700 dark:text-amber-300 flex items-start gap-1.5">
           <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-px" />
-          {errors.length === 1 ? 'Un correo reenviado' : `${errors.length} correos reenviados`} no traía una factura electrónica válida.
+          <span>
+            {errors.length === 1 ? 'Un correo recibido' : `${errors.length} correos recibidos`} no traía una factura electrónica válida y se
+            rechazó{errors[0].sender ? ` (último: ${errors[0].sender})` : ''}. Se necesitan los XML y el PDF de Hacienda.
+          </span>
         </p>
       )}
     </div>

@@ -14,9 +14,14 @@ export const INBOUND_DOMAIN = ((import.meta.env.VITE_INBOUND_DOMAIN as string | 
 export interface InvoiceMailbox {
   householdId: string;
   code: string;
+  /** Readable name (alias@domain); null until the household picks one */
+  alias: string | null;
   isActive: boolean;
   autoImport: boolean;
 }
+
+/** Files an e-invoice email should carry; `missing` lists the ones that didn't arrive */
+export type InboundPart = 'factura' | 'respuesta' | 'pdf';
 
 export type InboundStatus = 'pending' | 'imported' | 'rejected' | 'duplicate' | 'error' | 'confirmation';
 
@@ -32,12 +37,92 @@ export interface InboundInvoice {
   errorDetail: string | null;
   confirmationCode: string | null;
   xmlPath: string | null;
+  responsePath: string | null;
   pdfPath: string | null;
+  /** Original attachment names, to download them as they arrived */
+  fileNames: Partial<Record<InboundPart, string>>;
+  /** What Hacienda answered ("aceptado", "rechazado"…), from its response XML */
+  haciendaStatus: string | null;
+  /** Invoice XML + Hacienda response + PDF all arrived */
+  isComplete: boolean;
+  missing: InboundPart[];
   receivedAt: string;
 }
 
+const PART_LABEL: Record<InboundPart, string> = {
+  factura: 'el XML de la factura',
+  respuesta: 'la respuesta de Hacienda',
+  pdf: 'el PDF',
+};
+
+/** "Falta el PDF y la respuesta de Hacienda" */
+export function missingText(missing: InboundPart[]): string {
+  const parts = missing.map((m) => PART_LABEL[m]);
+  if (parts.length === 0) return '';
+  const list = parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(', ')} y ${parts[parts.length - 1]}`;
+  return `Falta ${list}`;
+}
+
+export const isHaciendaRejected = (inv: InboundInvoice) => Boolean(inv.haciendaStatus && /rechaz/.test(inv.haciendaStatus));
+
+/** Only complete sets that Hacienda accepted are imported without review */
+export const canAutoImport = (inv: InboundInvoice) =>
+  inv.status === 'pending' && inv.isComplete && Boolean(inv.xmlPath) && !isHaciendaRejected(inv);
+
+/** Code address: works always, but it's hard to dictate */
 export function mailboxAddress(code: string): string {
   return `facturas+${code}@${INBOUND_DOMAIN}`;
+}
+
+export function aliasAddress(alias: string): string {
+  return `${alias}@${INBOUND_DOMAIN}`;
+}
+
+/** Same rules as public.normalize_invoice_alias(): "Familia Peña" -> "familia-pena" */
+export function normalizeAlias(value: string): string {
+  return value
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[\s_.]+/g, '-')
+    .replace(/[^a-z0-9-]/g, '')
+    .replace(/-{2,}/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 30)
+    .replace(/-+$/g, '');
+}
+
+export type AliasCheck = 'ok' | 'invalid' | 'reserved' | 'taken' | 'mine';
+
+export async function checkAlias(sb: SupabaseClient, alias: string, householdId: string): Promise<AliasCheck> {
+  const { data, error } = await sb.rpc('check_invoice_alias', { p_alias: alias, p_household_id: householdId });
+  if (error) throw new Error(error.message);
+  return data as AliasCheck;
+}
+
+/** Saves the alias (the previous one keeps working 30 days); returns the stored form */
+export async function saveAlias(sb: SupabaseClient, householdId: string, alias: string): Promise<string> {
+  const { data, error } = await sb.rpc('set_invoice_alias', { p_household_id: householdId, p_alias: alias });
+  if (error) {
+    const reason = error.message.match(/alias_(invalid|reserved|taken)/)?.[1];
+    throw new Error(reason ?? error.message);
+  }
+  return data as string;
+}
+
+/** First free name built from the household's name: "rodriguez", "rodriguez-2"… */
+export async function suggestAlias(sb: SupabaseClient, householdId: string, householdName: string): Promise<string | null> {
+  const base = normalizeAlias(householdName.replace(/^(hogar|casa|familia)\s+(de\s+(la\s+|los\s+)?)?/i, '')) || 'mi-hogar';
+  const root = base.length >= 3 ? base.slice(0, 27).replace(/-+$/, '') : `${base}-casa`;
+  for (const candidate of [root, ...[2, 3, 4, 5, 6].map((n) => `${root}-${n}`)]) {
+    try {
+      const result = await checkAlias(sb, candidate, householdId);
+      if (result === 'ok' || result === 'mine') return candidate;
+    } catch {
+      return null;
+    }
+  }
+  return null;
 }
 
 function randomCode(): string {
@@ -47,15 +132,31 @@ function randomCode(): string {
   return Array.from(bytes, (b) => alphabet[b % alphabet.length]).join('');
 }
 
-function mapMailbox(r: Record<string, unknown>): InvoiceMailbox {
-  return { householdId: r.household_id as string, code: r.code as string, isActive: Boolean(r.is_active), autoImport: Boolean(r.auto_import) };
+function mapMailbox(r: Record<string, unknown>, alias: string | null): InvoiceMailbox {
+  return {
+    householdId: r.household_id as string,
+    code: r.code as string,
+    alias,
+    isActive: Boolean(r.is_active),
+    autoImport: Boolean(r.auto_import),
+  };
+}
+
+async function currentAlias(sb: SupabaseClient, householdId: string): Promise<string | null> {
+  const { data, error } = await sb
+    .from('invoice_mailbox_aliases')
+    .select('alias')
+    .eq('household_id', householdId)
+    .is('expires_at', null)
+    .maybeSingle();
+  return error || !data ? null : (data.alias as string);
 }
 
 /** Null when the household never turned it on (or the migration isn't applied yet). */
 export async function getMailbox(sb: SupabaseClient, householdId: string): Promise<InvoiceMailbox | null> {
   const { data, error } = await sb.from('invoice_mailboxes').select('*').eq('household_id', householdId).maybeSingle();
   if (error || !data) return null;
-  return mapMailbox(data);
+  return mapMailbox(data, await currentAlias(sb, householdId));
 }
 
 export async function enableMailbox(sb: SupabaseClient, householdId: string, userId: string): Promise<InvoiceMailbox> {
@@ -66,11 +167,11 @@ export async function enableMailbox(sb: SupabaseClient, householdId: string, use
   }
   const { data, error } = await sb
     .from('invoice_mailboxes')
-    .insert({ household_id: householdId, code: randomCode(), created_by: userId })
+    .insert({ household_id: householdId, code: randomCode(), created_by: userId, auto_import: true })
     .select('*')
     .single();
   if (error) throw new Error(error.message);
-  return mapMailbox(data);
+  return mapMailbox(data, null);
 }
 
 export async function updateMailbox(
@@ -105,7 +206,12 @@ function mapInbound(r: Record<string, unknown>): InboundInvoice {
     errorDetail: (r.error_detail as string | null) ?? null,
     confirmationCode: (r.confirmation_code as string | null) ?? null,
     xmlPath: (r.xml_path as string | null) ?? null,
+    responsePath: (r.response_path as string | null) ?? null,
     pdfPath: (r.pdf_path as string | null) ?? null,
+    fileNames: r.file_names && typeof r.file_names === 'object' ? (r.file_names as Partial<Record<InboundPart, string>>) : {},
+    haciendaStatus: (r.hacienda_status as string | null) ?? null,
+    isComplete: Boolean(r.is_complete),
+    missing: Array.isArray(r.missing) ? (r.missing as InboundPart[]) : [],
     receivedAt: r.received_at as string,
   };
 }
@@ -154,13 +260,38 @@ export async function claimInboundForImport(sb: SupabaseClient, id: string): Pro
   return !error && (data?.length ?? 0) > 0;
 }
 
-export async function linkInboundPurchase(sb: SupabaseClient, id: string, purchaseId: string): Promise<void> {
-  await sb.from('inbound_invoices').update({ purchase_id: purchaseId }).eq('id', id);
+export interface InboundFile {
+  part: InboundPart;
+  label: string;
+  path: string;
+  name: string;
 }
 
-export async function pdfUrl(sb: SupabaseClient, path: string): Promise<string | null> {
-  const { data } = await sb.storage.from(BUCKET).createSignedUrl(path, 600);
+const FILE_LABEL: Record<InboundPart, string> = { factura: 'Factura (XML)', respuesta: 'Respuesta de Hacienda (XML)', pdf: 'PDF' };
+
+/** The original files stored for an email invoice, in a fixed order. */
+export function inboundFiles(invoice: InboundInvoice): InboundFile[] {
+  const base = invoice.clave ?? invoice.id;
+  const entries: [InboundPart, string | null, string][] = [
+    ['factura', invoice.xmlPath, `${base}.xml`],
+    ['respuesta', invoice.responsePath, `${base}_respuesta.xml`],
+    ['pdf', invoice.pdfPath, `${base}.pdf`],
+  ];
+  return entries
+    .filter(([, path]) => !!path)
+    .map(([part, path, fallback]) => ({ part, label: FILE_LABEL[part], path: path!, name: invoice.fileNames[part] || fallback }));
+}
+
+/** Signed link to a stored file; with `downloadName` the browser saves it under that name. */
+export async function inboundFileUrl(sb: SupabaseClient, path: string, downloadName?: string): Promise<string | null> {
+  const { data } = await sb.storage.from(BUCKET).createSignedUrl(path, 600, downloadName ? { download: downloadName } : undefined);
   return data?.signedUrl ?? null;
+}
+
+/** Email invoice a purchase was imported from, if any */
+export async function inboundInvoiceForPurchase(sb: SupabaseClient, inboundInvoiceId: string): Promise<InboundInvoice | null> {
+  const { data, error } = await sb.from('inbound_invoices').select('*').eq('id', inboundInvoiceId).maybeSingle();
+  return error || !data ? null : mapInbound(data as Record<string, unknown>);
 }
 
 /** Downloads and reads the XML in the browser with the same parser as manual uploads. */
@@ -187,7 +318,8 @@ export function purchaseFromScan(
   result: ScannedReceiptResult,
   dataUrl: string,
   supermarkets: SupermarketStore[],
-  memberId: string
+  memberId: string,
+  inboundInvoiceId?: string
 ): Purchase {
   const scannedStore = fold(result.supermarket || '');
   const known = scannedStore
@@ -230,6 +362,7 @@ export function purchaseFromScan(
     totalAmount: result.receiptTotal || itemsTotal,
     notes: 'Importada por correo',
     receiptImageUrl: dataUrl,
+    ...(inboundInvoiceId ? { inboundInvoiceId } : {}),
     items,
   };
 }
