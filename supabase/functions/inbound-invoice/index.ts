@@ -1,7 +1,7 @@
 // ============================================================================
 // Edge Function `inbound-invoice`: webhook for Resend Inbound ("email.received").
 // Invoices reach <alias>@<INBOUND_DOMAIN> (the household's readable name, which can be given
-// straight to a store) or the older facturas+<code>@<INBOUND_DOMAIN>. A Costa Rican e-invoice
+// straight to a store). A Costa Rican e-invoice
 // email carries three files: the invoice XML, Hacienda's response XML (MensajeHacienda) and the
 // PDF. All three are stored in the private bucket `inbound-invoices` and a row goes to
 // inbound_invoices. Only a complete set accepted by Hacienda is imported automatically; an
@@ -182,18 +182,13 @@ function localParts(addresses: string[], domain: string): string[] {
 }
 
 /**
- * Household that owns one of the addresses: facturas+<code>, <alias> (hyphens, dots and
- * underscores ignored, so a cashier who drops a hyphen still gets it right) or a bare <code>.
+ * Household that owns one of the addresses: only <alias> (hyphens, dots and underscores
+ * ignored, so a cashier who drops a hyphen still gets it right). The old facturas+<code>
+ * and bare <code> addresses are no longer accepted.
  */
 async function findMailbox(admin: SupabaseClient, locals: string[]): Promise<Row | null> {
   const select = "household_id, is_active, households(plan)";
   for (const local of locals) {
-    const plus = local.match(/^[^+]+\+([a-z0-9]{8,16})$/);
-    if (plus) {
-      const { data } = await admin.from("invoice_mailboxes").select(select).eq("code", plus[1]).maybeSingle();
-      if (data) return data as Row;
-      continue;
-    }
     const key = local.replace(/[-._]/g, "");
     if (!/^[a-z0-9]{3,30}$/.test(key)) continue;
     const { data: alias } = await admin
@@ -202,15 +197,9 @@ async function findMailbox(admin: SupabaseClient, locals: string[]): Promise<Row
       .eq("alias_key", key)
       .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
       .maybeSingle();
-    if (alias) {
-      const { data } = await admin.from("invoice_mailboxes").select(select).eq("household_id", alias.household_id).maybeSingle();
-      if (data) return data as Row;
-      continue;
-    }
-    if (/^[a-z0-9]{8,16}$/.test(local)) {
-      const { data } = await admin.from("invoice_mailboxes").select(select).eq("code", local).maybeSingle();
-      if (data) return data as Row;
-    }
+    if (!alias) continue;
+    const { data } = await admin.from("invoice_mailboxes").select(select).eq("household_id", alias.household_id).maybeSingle();
+    if (data) return data as Row;
   }
   return null;
 }
@@ -218,7 +207,7 @@ async function findMailbox(admin: SupabaseClient, locals: string[]): Promise<Row
 const asList = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : typeof v === "string" ? [v] : []);
 
 async function handleEmail(admin: SupabaseClient, data: Row): Promise<Response> {
-  // Gmail forwarding keeps the original To header; our facturas+<code>@ address only shows up in received_for.
+  // Gmail forwarding keeps the original To header; our <alias>@ address only shows up in received_for.
   // Only addresses on this project's domain count; mail for the other environment is dropped here, without logging it.
   const locals = localParts([...asList(data.received_for), ...asList(data.to), ...asList(data.cc), ...asList(data.bcc)], inboundDomain());
   if (locals.length === 0) return json({ ignored: "no_code_for_this_domain" }, 200);
@@ -319,16 +308,33 @@ async function handleEmail(admin: SupabaseClient, data: Row): Promise<Response> 
   const missing = [!invoice && "factura", !response && "respuesta", !pdf && "pdf"].filter((m): m is string => Boolean(m));
   const isComplete = missing.length === 0;
 
+  // Duplicate only while the same invoice is waiting in the tray or its purchase still exists.
+  // If the purchase was deleted (or the invoice discarded), sending it again registers it again.
   let status: "pending" | "duplicate" = "pending";
   if (clave) {
     const { data: existing } = await admin
       .from("inbound_invoices")
-      .select("id")
+      .select("id, status, purchase_id")
       .eq("household_id", householdId)
       .eq("clave", clave)
-      .neq("status", "duplicate")
-      .limit(1);
-    if (existing && existing.length > 0) status = "duplicate";
+      .in("status", ["pending", "imported"]);
+    for (const row of existing ?? []) {
+      if (row.status === "pending") {
+        status = "duplicate";
+        break;
+      }
+      const { count: linked } = await admin
+        .from("purchases")
+        .select("id", { count: "exact", head: true })
+        .eq("household_id", householdId)
+        .or(`inbound_invoice_id.eq.${row.id}${row.purchase_id ? `,id.eq.${row.purchase_id}` : ""}`);
+      if ((linked ?? 0) > 0) {
+        status = "duplicate";
+        break;
+      }
+      // Its purchase was deleted: release the old row so the clave can be used again
+      await admin.from("inbound_invoices").update({ status: "rejected", error_detail: "Compra eliminada" }).eq("id", row.id);
+    }
   }
 
   const store = async (file: InboundAttachment | null, suffix: string, contentType: string): Promise<string | null> => {
