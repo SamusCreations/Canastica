@@ -106,6 +106,8 @@ export interface Purchase {
   totalAmount: number;  // in CRC
   receiptImageUrl: string;
   notes?: string;
+  /** Email invoice this purchase was imported from (its original files) */
+  inboundInvoiceId?: string;
   items: PurchaseItem[];
 }
 

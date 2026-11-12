@@ -260,10 +260,6 @@ export async function claimInboundForImport(sb: SupabaseClient, id: string): Pro
   return !error && (data?.length ?? 0) > 0;
 }
 
-export async function linkInboundPurchase(sb: SupabaseClient, id: string, purchaseId: string): Promise<void> {
-  await sb.from('inbound_invoices').update({ purchase_id: purchaseId }).eq('id', id);
-}
-
 export interface InboundFile {
   part: InboundPart;
   label: string;
@@ -293,8 +289,8 @@ export async function inboundFileUrl(sb: SupabaseClient, path: string, downloadN
 }
 
 /** Email invoice a purchase was imported from, if any */
-export async function inboundInvoiceForPurchase(sb: SupabaseClient, purchaseId: string): Promise<InboundInvoice | null> {
-  const { data, error } = await sb.from('inbound_invoices').select('*').eq('purchase_id', purchaseId).limit(1).maybeSingle();
+export async function inboundInvoiceForPurchase(sb: SupabaseClient, inboundInvoiceId: string): Promise<InboundInvoice | null> {
+  const { data, error } = await sb.from('inbound_invoices').select('*').eq('id', inboundInvoiceId).maybeSingle();
   return error || !data ? null : mapInbound(data as Record<string, unknown>);
 }
 
@@ -322,7 +318,8 @@ export function purchaseFromScan(
   result: ScannedReceiptResult,
   dataUrl: string,
   supermarkets: SupermarketStore[],
-  memberId: string
+  memberId: string,
+  inboundInvoiceId?: string
 ): Purchase {
   const scannedStore = fold(result.supermarket || '');
   const known = scannedStore
@@ -365,6 +362,7 @@ export function purchaseFromScan(
     totalAmount: result.receiptTotal || itemsTotal,
     notes: 'Importada por correo',
     receiptImageUrl: dataUrl,
+    ...(inboundInvoiceId ? { inboundInvoiceId } : {}),
     items,
   };
 }

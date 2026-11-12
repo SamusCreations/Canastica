@@ -139,7 +139,6 @@ import {
   INBOUND_DOMAIN,
   InboundInvoice,
   InvoiceMailbox,
-  linkInboundPurchase,
   listInboundInvoices,
   loadInboundScan,
   purchaseFromScan,
@@ -407,7 +406,6 @@ export function HouseholdWorkspace({
   const [invoiceMailbox, setInvoiceMailbox] = useState<InvoiceMailbox | null>(null);
   const [isEmailInvoicesOpen, setIsEmailInvoicesOpen] = useState(false);
   const [inboundBusyId, setInboundBusyId] = useState<string | null>(null);
-  const lastSavedPurchaseIdRef = useRef<string | null>(null);
 
   // Toast feedback
   const [toast, setToast] = useState<{ kind: 'error' | 'success'; text: string } | null>(null);
@@ -822,10 +820,13 @@ export function HouseholdWorkspace({
   const handleSavePurchase = (scanned: Purchase) => {
     // Fresh UUIDs so rows are valid for Postgres and stable across devices
     const purchaseId = newId();
-    lastSavedPurchaseIdRef.current = purchaseId;
+    const reviewedInbound = queuedReview?.id.startsWith(INBOUND_QUEUE_PREFIX)
+      ? queuedReview.id.slice(INBOUND_QUEUE_PREFIX.length)
+      : undefined;
     const newPurchase: Purchase = {
       ...scanned,
       id: purchaseId,
+      inboundInvoiceId: scanned.inboundInvoiceId ?? reviewedInbound,
       householdId: householdId || scanned.householdId,
       items: scanned.items.map((it) => ({ ...it, id: newId(), purchaseId })),
     };
@@ -1117,13 +1118,14 @@ export function HouseholdWorkspace({
   const [inspectedInbound, setInspectedInbound] = useState<InboundInvoice | null>(null);
   useEffect(() => {
     setInspectedInbound(null);
-    if (!sb || !isCloud || !inspectedPurchase?.id) return;
+    const inboundId = inspectedPurchase?.inboundInvoiceId;
+    if (!sb || !isCloud || !inboundId) return;
     let active = true;
-    void inboundInvoiceForPurchase(sb, inspectedPurchase.id).then((inv) => active && setInspectedInbound(inv));
+    void inboundInvoiceForPurchase(sb, inboundId).then((inv) => active && setInspectedInbound(inv));
     return () => {
       active = false;
     };
-  }, [sb, isCloud, inspectedPurchase?.id]);
+  }, [sb, isCloud, inspectedPurchase?.inboundInvoiceId]);
 
   const savePurchaseRef = useRef(handleSavePurchase);
   savePurchaseRef.current = handleSavePurchase;
@@ -1141,9 +1143,7 @@ export function HouseholdWorkspace({
         autoImportTriedRef.current.add(invoice.id);
         const scan = await loadInboundScan(sb, invoice);
         if (!scan || !(await claimInboundForImport(sb, invoice.id))) continue;
-        savePurchaseRef.current(purchaseFromScan(scan.result, scan.dataUrl, baseHousehold.supermarkets, currentMemberId));
-        const purchaseId = lastSavedPurchaseIdRef.current;
-        if (purchaseId) await linkInboundPurchase(sb, invoice.id, purchaseId);
+        savePurchaseRef.current(purchaseFromScan(scan.result, scan.dataUrl, baseHousehold.supermarkets, currentMemberId, invoice.id));
         importedIds.add(invoice.id);
       }
       const imported = importedIds.size;
@@ -2041,9 +2041,9 @@ export function HouseholdWorkspace({
           // Invoice received by email and approved by the user
           if (!queueId.startsWith(INBOUND_QUEUE_PREFIX) || !sb) return;
           const inboundId = queueId.slice(INBOUND_QUEUE_PREFIX.length);
-          const purchaseId = lastSavedPurchaseIdRef.current ?? undefined;
           setInboundInvoices((prev) => prev.filter((i) => i.id !== inboundId));
-          persist((client) => setInboundStatus(client, inboundId, 'imported', purchaseId));
+          // The purchase itself carries the link (inbound_invoice_id), set in its insert
+          persist((client) => setInboundStatus(client, inboundId, 'imported'));
         }}
         editingPurchase={editingPurchase}
         onUpdatePurchase={handleUpdatePurchase}
