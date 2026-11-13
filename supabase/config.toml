@@ -1,0 +1,13 @@
+project_id = "canastica"
+
+[functions.assistant]
+verify_jwt = true
+
+[functions.notify]
+verify_jwt = true
+
+[functions.inbound-invoice]
+verify_jwt = false
+
+[functions.summary]
+verify_jwt = false
