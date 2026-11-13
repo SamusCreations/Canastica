@@ -10,7 +10,6 @@ import {
   InboundInvoice,
   INBOUND_DOMAIN,
   InvoiceMailbox,
-  mailboxAddress,
   normalizeAlias,
   regenerateMailboxCode,
   saveAlias,
@@ -110,8 +109,8 @@ export const EmailInvoicesSheet: React.FC<EmailInvoicesSheetProps> = ({
   };
 
   const active = mailbox?.isActive;
-  const codeAddress = mailbox ? mailboxAddress(mailbox.code) : '';
-  const address = mailbox?.alias ? aliasAddress(mailbox.alias) : codeAddress;
+  // Only the named address receives invoices; without a name there is no address yet
+  const address = mailbox?.alias ? aliasAddress(mailbox.alias) : '';
 
   const activate = () =>
     run(async () => {
@@ -123,7 +122,7 @@ export const EmailInvoicesSheet: React.FC<EmailInvoicesSheetProps> = ({
           try {
             next = { ...next, alias: await saveAlias(sb, householdId, suggestion) };
           } catch {
-            // keep the code address; the household can pick a name below
+            // no address until the household picks a name below
           }
         }
       }
@@ -257,6 +256,7 @@ export const EmailInvoicesSheet: React.FC<EmailInvoicesSheetProps> = ({
                 </form>
               ) : (
                 <>
+                  {address ? (
                   <div className="flex items-center gap-2">
                     <code className="flex-1 min-w-0 break-all text-sm font-bold">{address}</code>
                     <button
@@ -266,15 +266,15 @@ export const EmailInvoicesSheet: React.FC<EmailInvoicesSheetProps> = ({
                       <Copy className="w-3.5 h-3.5" /> Copiar
                     </button>
                   </div>
+                  ) : (
+                    <p className="text-xs text-amber-700 dark:text-amber-300">Elige un nombre para tener tu dirección de facturas.</p>
+                  )}
                   <button
                     onClick={startEditAlias}
                     className="text-xs font-semibold text-avocado-700 dark:text-avocado-400 flex items-center gap-1 min-h-[32px]"
                   >
                     <Pencil className="w-3.5 h-3.5" /> {mailbox?.alias ? 'Cambiar nombre' : 'Elegir un nombre fácil de recordar'}
                   </button>
-                  {mailbox?.alias && (
-                    <p className="text-[11px] text-[var(--text-muted)] break-all">También funciona: {codeAddress}</p>
-                  )}
                 </>
               )}
             </section>
