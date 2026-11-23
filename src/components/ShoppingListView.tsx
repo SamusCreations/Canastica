@@ -14,6 +14,7 @@ import {
   Trash2,
   Wand2,
 } from 'lucide-react';
+import { Button, TextInput } from './ui/Form';
 import {
   describeAiQuota,
   MAX_SHOPPING_TEXT_CHARS,
@@ -303,32 +304,29 @@ export const ShoppingListView: React.FC<ShoppingListViewProps> = ({
           </div>
         </div>
 
-        <form onSubmit={(e) => handleParseAndAdd(e)} className="flex flex-col sm:flex-row gap-2">
-          <input
-            type="text"
-            value={nlInput}
-            maxLength={MAX_SHOPPING_TEXT_CHARS}
-            onChange={(e) => setNlInput(e.target.value)}
-            placeholder='Ej.: 2 L de leche, pan y detergente'
-            className="liquid-input flex-1 px-3.5 py-2 rounded-lg text-xs sm:text-sm font-medium"
-          />
-          <button
-            type="submit"
-            disabled={isParsing || !nlInput.trim()}
-            className="liquid-lens-btn px-4 py-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 disabled:opacity-50 shrink-0"
-          >
-            {isParsing ? (
-              <>
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                Desglosando...
-              </>
-            ) : (
-              <>
-                <Plus className="w-3.5 h-3.5" />
-                {aiAvailable ? 'Añadir con IA' : 'Añadir'}
-              </>
-            )}
-          </button>
+        <form onSubmit={(e) => handleParseAndAdd(e)} className="flex gap-2">
+          <label htmlFor="shopping-add" className="sr-only">
+            Agregar a la lista
+          </label>
+          <div className="relative flex-1 min-w-0">
+            <Plus className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-avocado-600 dark:text-avocado-400" />
+            <TextInput
+              id="shopping-add"
+              type="text"
+              value={nlInput}
+              maxLength={MAX_SHOPPING_TEXT_CHARS}
+              onChange={(e) => setNlInput(e.target.value)}
+              placeholder="Agregar: 2 L de leche, pan y detergente"
+              enterKeyHint="send"
+              autoComplete="off"
+              className="pl-11"
+            />
+          </div>
+          <Button type="submit" size="lg" disabled={isParsing || !nlInput.trim()} className="shrink-0 px-4">
+            {isParsing ? <Loader2 className="w-5 h-5 animate-spin" /> : <Plus className="w-5 h-5 sm:hidden" />}
+            <span className="hidden sm:inline">{isParsing ? 'Desglosando…' : aiAvailable ? 'Añadir con IA' : 'Añadir'}</span>
+            <span className="sr-only sm:hidden">Añadir</span>
+          </Button>
         </form>
 
         {stalled && (

@@ -8,7 +8,7 @@ import { getReportScreenContext } from '../lib/appContext';
 const DevConsolePanel = lazy(() => import('./DevConsolePanel'));
 
 // Bottom left on mobile (clear of the tab bar), bottom right on desktop
-const FAB_POSITION = 'fixed z-[90] left-3 lg:left-auto lg:right-4 bottom-[calc(env(safe-area-inset-bottom)+84px)] sm:bottom-4';
+const FAB_POSITION = 'fixed z-[55] left-3 lg:left-auto lg:right-4 bottom-[calc(env(safe-area-inset-bottom)+84px)] lg:bottom-4';
 
 /**
  * Floating button that is always visible: opens "Reportar un problema".

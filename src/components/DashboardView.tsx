@@ -5,10 +5,11 @@ import {
   ArrowUpRight,
   Camera,
   Check,
-  Clock,
-  Eye,
-  Flame,
+  ListChecks,
   Plus,
+  Receipt,
+  ScanLine,
+  ShoppingCart,
   Sparkles,
   TrendingUp,
   Zap,
@@ -25,8 +26,7 @@ import {
   translateCategory,
   translateConfidence,
 } from '../utils/formatters';
-import { getCurrentMonthPrefix, monthLabel, monthName, monthProgress } from '../utils/dates';
-import { Avatar } from './Avatar';
+import { getCurrentMonthPrefix, monthName, monthProgress } from '../utils/dates';
 
 interface DashboardViewProps {
   household: Household;
@@ -44,6 +44,9 @@ interface DashboardViewProps {
   onOpenScanner: () => void;
   onNavigateTab: (tab: string) => void;
   onOpenAssistantWithPrompt: (prompt: string) => void;
+  onOpenSupermarketMode: () => void;
+  pendingListCount: number;
+  priceAlertCount: number;
 }
 
 const FREQUENT_QUICK_CHIPS: {
@@ -73,6 +76,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onOpenScanner,
   onNavigateTab,
   onOpenAssistantWithPrompt,
+  onOpenSupermarketMode,
+  pendingListCount,
+  priceAlertCount,
 }) => {
   const [recentlyAddedChip, setRecentlyAddedChip] = useState<string | null>(null);
   const cur = household.currency;
@@ -93,12 +99,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     100,
     Math.round((currentMonthSpent / Math.max(1, household.monthlyBudget)) * 100)
   );
-
-  // Compact SVG Ring geometry
-  const radius = 44;
-  const circumference = 2 * Math.PI * radius;
-  const strokeDashoffset =
-    circumference - (Math.min(100, budgetPercentage) / 100) * circumference;
 
   const categoryTotals = new Map<GroceryCategory, number>();
   for (const p of currentMonthPurchases) {
@@ -134,445 +134,314 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     setTimeout(() => setRecentlyAddedChip(null), 1300);
   };
 
+  const recent = purchases.slice(0, 5);
+  const urgentCount = predictions.filter((p) => p.estimatedDaysRemaining <= household.restockAlertDays).length;
+  const kpis = [
+    { value: String(pendingListCount), label: lang === 'es' ? 'en la lista' : 'on the list', icon: ListChecks, tab: 'shopping-list' },
+    { value: String(urgentCount), label: lang === 'es' ? 'por reponer' : 'to restock', icon: Sparkles, tab: 'restock-ai' },
+    { value: String(priceAlertCount), label: lang === 'es' ? 'alertas de precio' : 'price alerts', icon: TrendingUp, tab: 'analytics' },
+    {
+      value: String(currentMonthPurchases.length),
+      label: lang === 'es' ? 'compras este mes' : 'purchases this month',
+      icon: Receipt,
+      tab: 'analytics',
+    },
+  ];
+  const daysLabel = (days: number) =>
+    days <= 0
+      ? lang === 'es'
+        ? 'hoy'
+        : 'today'
+      : days === 1
+        ? lang === 'es'
+          ? 'mañana'
+          : 'tomorrow'
+        : lang === 'es'
+          ? `en ${days} días`
+          : `in ${days} days`;
+
   return (
-    <div className="space-y-3.5">
-      {/* Row 1: Compact Horizontal Budget Ring (4 cols) + AI Insights & 1-Tap Chips (8 cols) */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-3.5">
-        {/* Col 1: Minimalist Horizontal Budget Card (4 cols) */}
-        <div className="lg:col-span-4 liquid-glass rounded-xl p-3.5 flex flex-col justify-between gap-3">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">
-                {lang === 'es' ? 'Presupuesto Mensual' : 'Monthly Budget'}
-              </h3>
-              <p className="text-[11px] text-[var(--text-secondary)] font-medium">
-                {monthLabel(monthPrefix, lang)} • {household.name}
-              </p>
-            </div>
-            <span
-              className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
-                budgetPercentage >= 85
-                  ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300'
-                  : 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
-              }`}
-            >
-              {budgetPercentage}% {lang === 'es' ? 'usado' : 'used'}
-            </span>
-          </div>
-
-          <div className="flex items-center gap-4">
-            {/* Compact SVG Ring */}
-            <div className="relative w-24 h-24 shrink-0 flex items-center justify-center">
-              <svg className="w-24 h-24 -rotate-90 transform" viewBox="0 0 108 108">
-                <circle
-                  cx="54"
-                  cy="54"
-                  r={radius}
-                  stroke="currentColor"
-                  strokeWidth="9"
-                  fill="transparent"
-                  className="opacity-10"
-                />
-                <circle
-                  cx="54"
-                  cy="54"
-                  r={radius}
-                  stroke="#4f7f27"
-                  strokeWidth="9"
-                  strokeDasharray={circumference}
-                  strokeDashoffset={strokeDashoffset}
-                  strokeLinecap="round"
-                  fill="transparent"
-                  className="transition-all duration-700 ease-out"
-                />
-              </svg>
-              <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
-                <span className="text-sm font-extrabold">{budgetPercentage}%</span>
-                <span className="text-[9px] uppercase text-[var(--text-muted)] font-semibold">
-                  {monthName(monthPrefix, lang, true)}
-                </span>
-              </div>
-            </div>
-
-            {/* Spend & KPI Breakdown */}
-            <div className="flex-1 min-w-0 space-y-2">
-              <div>
-                <span className="text-[10px] uppercase text-[var(--text-muted)] block">
-                  {lang === 'es' ? 'Gasto Acumulado' : 'Spent so far'}
-                </span>
-                <div className="text-lg font-extrabold tracking-tight truncate">
-                  {formatCurrency(currentMonthSpent, cur)}
-                </div>
-                <span className="text-[11px] text-[var(--text-muted)]">
-                  de {formatCurrency(household.monthlyBudget, cur)}
-                </span>
-              </div>
-
-              <div className="grid grid-cols-2 gap-1.5 pt-1 border-t border-[var(--glass-border)]">
-                <div>
-                  <span className="text-[10px] text-[var(--text-muted)] block">
-                    {lang === 'es' ? 'Disponible' : 'Remaining'}
-                  </span>
-                  <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">
-                    {formatCurrency(budgetRemaining, cur, true)}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-[10px] text-[var(--text-muted)] block">
-                    {lang === 'es' ? 'Ritmo/Día' : 'Daily Pace'}
-                  </span>
-                  <span className="text-xs font-bold text-avocado-600 dark:text-avocado-400">
-                    {formatCurrency(budgetRemaining / daysLeftInMonth, cur, true)}/d
-                  </span>
-                </div>
-              </div>
-            </div>
-          </div>
+    <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 lg:gap-6">
+      {/* Budget hero */}
+      <section className="xl:col-span-2 relative overflow-hidden rounded-3xl bg-avocado-600 dark:bg-avocado-700 text-white p-5 sm:p-7">
+        <div
+          className="pointer-events-none absolute -right-12 -top-12 w-52 h-52 rounded-full border-[26px] border-white/10"
+          aria-hidden="true"
+        />
+        <p className="text-sm text-avocado-100 font-medium">
+          {lang === 'es' ? 'Gastado en' : 'Spent in'} {monthName(monthPrefix, lang).toLowerCase()}
+        </p>
+        <p className="text-4xl sm:text-5xl font-bold tracking-tight mt-1 tabular-nums">{formatCurrency(currentMonthSpent, cur)}</p>
+        <p className="text-sm text-avocado-100 mt-1">
+          {lang === 'es' ? 'de' : 'of'} {formatCurrency(household.monthlyBudget, cur)} · {lang === 'es' ? 'quedan' : 'left'}{' '}
+          <strong className="text-white">{formatCurrency(budgetRemaining, cur)}</strong>
+        </p>
+        <div
+          className="h-2 rounded-full bg-white/20 mt-4 overflow-hidden"
+          role="progressbar"
+          aria-valuenow={budgetPercentage}
+          aria-valuemin={0}
+          aria-valuemax={100}
+        >
+          <div
+            className={`h-full rounded-full transition-all duration-700 ${budgetPercentage >= 90 ? 'bg-coral-400' : 'bg-white'}`}
+            style={{ width: `${budgetPercentage}%` }}
+          />
         </div>
-
-        {/* Col 2: AI Insights & 1-Tap Quick Chips (8 cols) */}
-        <div className="lg:col-span-8 liquid-glass rounded-xl p-3.5 flex flex-col justify-between gap-2.5">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <div className="w-7 h-7 rounded-lg liquid-lens-btn flex items-center justify-center text-white shrink-0">
-                <Sparkles className="w-3.5 h-3.5" />
-              </div>
-              <div className="flex items-center gap-2">
-                <h2 className="text-xs font-bold uppercase tracking-wider text-avocado-600 dark:text-avocado-400">
-                  {lang === 'es' ? 'Resumen inteligente' : 'Smart insights'}
-                </h2>
-                <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 font-semibold">
-                  Activo
-                </span>
-              </div>
-            </div>
+        <div className="flex flex-wrap items-center justify-between gap-3 mt-5">
+          <div className="flex gap-2">
             <button
-              onClick={() =>
-                onOpenAssistantWithPrompt(
-                  `¿Cuánto hemos gastado en ${monthName(monthPrefix, 'es').toLowerCase()} por categoría y dónde podemos ahorrar?`
-                )
-              }
-              className="liquid-glass-subtle liquid-glass-interactive px-2.5 py-1 rounded-lg text-[11px] font-bold flex items-center gap-1 text-avocado-600 dark:text-avocado-400 shrink-0"
+              onClick={onOpenScanner}
+              className="h-11 px-4 rounded-xl bg-white text-avocado-800 text-sm font-semibold flex items-center gap-2 whitespace-nowrap hover:bg-avocado-50 transition"
             >
-              Preguntar a IA <ArrowUpRight className="w-3 h-3" />
+              <ScanLine className="w-4 h-4" /> {lang === 'es' ? 'Escanear' : 'Scan'}
+            </button>
+            <button
+              onClick={onOpenSupermarketMode}
+              className="h-11 px-4 rounded-xl bg-white/15 hover:bg-white/25 text-sm font-semibold flex items-center gap-2 whitespace-nowrap transition"
+            >
+              <ShoppingCart className="w-4 h-4" /> {lang === 'es' ? 'Modo súper' : 'Store mode'}
             </button>
           </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-12 gap-2.5 items-center">
-            <div className="md:col-span-7">
-              <p className="text-xs sm:text-sm font-semibold leading-snug text-[var(--text-primary)]">
-                “{insights.headline}”
-              </p>
-            </div>
-            <div className="md:col-span-5 liquid-glass-subtle rounded-lg p-2.5 flex items-start gap-2">
-              <Zap className="w-3.5 h-3.5 text-amber-500 shrink-0 mt-0.5" />
-              <p className="text-[11px] text-[var(--text-secondary)] leading-snug line-clamp-2">
-                <strong className="text-amber-600 dark:text-amber-400">Consejo:</strong>{' '}
-                {insights.suggestion}
-              </p>
-            </div>
-          </div>
-
-          {/* 1-Tap Frequent Product Chips */}
-          <div className="pt-2 border-t border-[var(--glass-border)] flex flex-wrap items-center justify-between gap-1.5">
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] mr-1">
-                {lang === 'es' ? 'Agregado Rápido:' : 'Quick Add:'}
-              </span>
-              {FREQUENT_QUICK_CHIPS.map((chip) => {
-                const isAdded = recentlyAddedChip === chip.canonicalName;
-                return (
-                  <button
-                    key={chip.canonicalName}
-                    onClick={() => handleChipTap(chip)}
-                    className={`px-2 py-1 rounded-lg text-[11px] font-semibold flex items-center gap-1 transition ${
-                      isAdded
-                        ? 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border border-emerald-500/40'
-                        : 'liquid-glass-subtle liquid-glass-interactive'
-                    }`}
-                  >
-                    {isAdded ? (
-                      <Check className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
-                    ) : (
-                      <Plus className="w-3 h-3 text-avocado-600 dark:text-avocado-400" />
-                    )}
-                    <span>{chip.canonicalName}</span>
-                  </button>
-                );
-              })}
-            </div>
-            <button
-              onClick={() => onNavigateTab('shopping-list')}
-              className="text-[11px] text-avocado-600 dark:text-avocado-400 hover:underline font-bold shrink-0"
-            >
-              {lang === 'es' ? 'Lista →' : 'List →'}
-            </button>
-          </div>
+          <p className="text-sm text-avocado-100">
+            {lang === 'es' ? 'Puedes gastar' : 'You can spend'}{' '}
+            <strong className="text-white tabular-nums">{formatCurrency(budgetRemaining / daysLeftInMonth, cur, true)}</strong>{' '}
+            {lang === 'es' ? 'por día' : 'per day'}
+          </p>
         </div>
-      </div>
+      </section>
 
-      {/* Row 2: Running Low Soon (7 cols) + Category Spending Bars (5 cols) */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-3.5">
-        {/* Running Low Soon Card (7 cols) */}
-        <div className="lg:col-span-7 liquid-glass rounded-xl p-3.5 flex flex-col justify-between gap-2.5">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2 min-w-0">
-              <Flame className="w-4 h-4 text-amber-500 shrink-0" />
-              <h3 className="text-xs font-bold uppercase tracking-wider truncate">
-                {lang === 'es' ? 'Por acabarse pronto' : 'Running low soon'}
-              </h3>
-              <span className="hidden sm:inline text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-700 dark:text-amber-300">
-                Unidades Base (ml/g/unid)
-              </span>
-            </div>
-            <button
-              onClick={() => onNavigateTab('restock-ai')}
-              className="shrink-0 whitespace-nowrap min-h-[32px] text-xs font-bold text-avocado-600 dark:text-avocado-400 hover:underline"
-            >
-              {lang === 'es' ? 'Ver todo →' : 'See all →'}
-            </button>
-          </div>
-
-          {runningLowItems.length === 0 && (
-            <p className="text-sm text-[var(--text-muted)] liquid-glass-subtle rounded-lg p-3">
-              {lang === 'es'
-                ? `Cuando compres un producto ${household.minPurchasesForPrediction} veces, aquí verás cuándo se va a acabar.`
-                : `Buy a product ${household.minPurchasesForPrediction} times to see when it will run out.`}
-            </p>
-          )}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-            {runningLowItems.map((pred) => {
-              const isUrgent = pred.estimatedDaysRemaining <= household.restockAlertDays;
-              const pctRemaining = Math.max(
-                8,
-                Math.min(
-                  100,
-                  Math.round(
-                    (pred.estimatedDaysRemaining / Math.max(1, pred.expectedDurationDays)) * 100
-                  )
-                )
-              );
-
-              return (
-                <div
-                  key={pred.canonicalName}
-                  className={`liquid-glass-subtle rounded-xl p-2.5 flex flex-col justify-between gap-2 border ${
-                    isUrgent ? 'border-amber-500/40' : 'border-[var(--glass-border)]'
-                  }`}
-                >
-                  <div>
-                    <div className="flex items-center justify-between gap-1.5">
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        <span className="font-bold text-xs truncate">{pred.canonicalName}</span>
-                        <span className="text-[9px] px-1.5 py-0.2 rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 font-semibold shrink-0">
-                          {translateConfidence(pred.confidenceLevel, lang)}
-                        </span>
-                      </div>
-                      <span
-                        className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full flex items-center gap-0.5 shrink-0 ${
-                          isUrgent
-                            ? 'bg-amber-500/20 text-amber-700 dark:text-amber-300'
-                            : 'bg-avocado-500/10 text-avocado-600 dark:text-avocado-400'
-                        }`}
-                      >
-                        <Clock className="w-2.5 h-2.5" />~{Math.round(pred.estimatedDaysRemaining)}d
-                      </span>
-                    </div>
-
-                    <p
-                      className="text-[11px] text-[var(--text-secondary)] leading-snug mt-1 line-clamp-2"
-                      title={pred.aiExplanation}
-                    >
-                      {pred.aiExplanation}
-                    </p>
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <div className="w-full h-1.5 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
-                      <div
-                        className={`h-full rounded-full transition-all duration-500 ${
-                          isUrgent ? 'bg-amber-500' : 'bg-avocado-600'
-                        }`}
-                        style={{ width: `${pctRemaining}%` }}
-                      />
-                    </div>
-
-                    <div className="flex items-center justify-between gap-1.5">
-                      <button
-                        onClick={() => onRestockFeedback(pred.canonicalName, 'ran_out')}
-                        className="flex-1 py-1 rounded-md text-[10px] font-bold bg-rose-500/12 hover:bg-rose-500/20 text-rose-700 dark:text-rose-300 transition"
-                      >
-                        Se acabó
-                      </button>
-                      <button
-                        onClick={() => onRestockFeedback(pred.canonicalName, 'still_have_some')}
-                        className="flex-1 py-1 rounded-md text-[10px] font-bold bg-emerald-500/12 hover:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 transition"
-                      >
-                        Aún queda
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Category Spending Bars (5 cols) */}
-        <div className="lg:col-span-5 liquid-glass rounded-xl p-3.5 flex flex-col justify-between gap-2.5">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1.5">
-              <TrendingUp className="w-4 h-4 text-avocado-600 dark:text-avocado-400" />
-              <h3 className="text-xs font-bold uppercase tracking-wider">
-                {lang === 'es' ? 'Gasto por Categoría' : 'Category Spend'}
-              </h3>
-            </div>
-            <button
-              onClick={() => onNavigateTab('analytics')}
-              className="text-[11px] font-bold text-avocado-600 dark:text-avocado-400 hover:underline"
-            >
-              Analíticas →
-            </button>
-          </div>
-
-          <div className="space-y-2 flex-1 flex flex-col justify-center">
-            {categoryRows.slice(0, 7).map((cat) => {
-              const isOver = cat.spent > cat.monthlyAllocation;
-              return (
-                <div key={cat.name} className="space-y-1">
-                  <div className="flex items-center justify-between text-[11px]">
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <span
-                        className="w-2 h-2 rounded-full shrink-0"
-                        style={{ backgroundColor: cat.color }}
-                      />
-                      <span className="font-semibold truncate">
-                        {translateCategory(cat.name, lang)}
-                      </span>
-                      {isOver && (
-                        <span className="text-[9px] px-1 py-0.2 rounded bg-rose-500/15 text-rose-600 dark:text-rose-400 font-bold flex items-center gap-0.5 shrink-0">
-                          <AlertCircle className="w-2.5 h-2.5" /> Excedido
-                        </span>
-                      )}
-                    </div>
-                    <div className="font-mono text-[11px] shrink-0">
-                      <span className="font-bold">{formatCurrency(cat.spent, cur)}</span>
-                      <span className="text-[var(--text-muted)]">
-                        {' '}
-                        / {formatCurrency(cat.monthlyAllocation, cur, true)}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="w-full h-1.5 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
-                    <div
-                      className="h-full rounded-full transition-all duration-700"
-                      style={{
-                        width: `${Math.max(4, cat.pct)}%`,
-                        backgroundColor: isOver ? '#e11d48' : cat.color,
-                      }}
-                    />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-
-      {/* Row 3: Recent Purchases Strip (4 Compact Horizontal Cards) */}
-      <div className="space-y-2">
-        <div className="flex items-center justify-between px-0.5">
-          <div className="flex items-center gap-2">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--text-secondary)]">
-              {lang === 'es' ? 'Facturas Recientes' : 'Recent Receipts'}
-            </h3>
-            <span className="text-[11px] text-[var(--text-muted)] hidden sm:inline">
-              • Haz clic en una factura para ver la foto original y el desglose
-            </span>
-          </div>
+      {/* Smart insight */}
+      <section className="card p-5 flex flex-col gap-3">
+        <div className="flex items-center justify-between gap-2">
+          <h3 className="font-bold flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-avocado-600 dark:text-avocado-400" />
+            {lang === 'es' ? 'Resumen del mes' : 'Monthly insight'}
+          </h3>
           <button
-            onClick={onOpenScanner}
-            className="text-[11px] font-bold text-avocado-600 dark:text-avocado-400 hover:underline flex items-center gap-1"
+            onClick={() =>
+              onOpenAssistantWithPrompt(
+                `¿Cuánto hemos gastado en ${monthName(monthPrefix, 'es').toLowerCase()} por categoría y dónde podemos ahorrar?`
+              )
+            }
+            className="text-sm font-semibold text-avocado-700 dark:text-avocado-300 flex items-center gap-1 min-h-9"
           >
-            <Camera className="w-3 h-3" />
-            {lang === 'es' ? '+ Nueva Factura' : '+ Scan Receipt'}
+            {lang === 'es' ? 'Preguntar' : 'Ask'} <ArrowUpRight className="w-4 h-4" />
           </button>
         </div>
+        <p className="text-[15px] leading-snug">{insights.headline}</p>
+        <p className="text-sm text-[var(--text-secondary)] rounded-xl bg-[var(--glass-bg-subtle)] p-3 flex gap-2 mt-auto">
+          <Zap className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+          <span>{insights.suggestion}</span>
+        </p>
+      </section>
 
-        {purchases.length === 0 && (
+      {/* KPIs */}
+      <div className="xl:col-span-3 grid grid-cols-2 lg:grid-cols-4 gap-3 lg:gap-4">
+        {kpis.map((k) => {
+          const Icon = k.icon;
+          return (
+            <button
+              key={k.label}
+              onClick={() => onNavigateTab(k.tab)}
+              className="card p-4 text-left hover:border-avocado-300 dark:hover:border-avocado-700 transition"
+            >
+              <Icon className="w-5 h-5 text-avocado-600 dark:text-avocado-400" />
+              <p className="text-2xl font-bold mt-2 tabular-nums">{k.value}</p>
+              <p className="text-xs text-[var(--text-muted)]">{k.label}</p>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Recent purchases */}
+      <section className="card p-5 xl:col-span-2">
+        <div className="flex items-center justify-between">
+          <h3 className="font-bold">{lang === 'es' ? 'Compras recientes' : 'Recent purchases'}</h3>
+          <button
+            onClick={() => onNavigateTab('analytics')}
+            className="text-sm font-semibold text-avocado-700 dark:text-avocado-300 min-h-9"
+          >
+            {lang === 'es' ? 'Ver todo' : 'See all'}
+          </button>
+        </div>
+        {purchases.length === 0 ? (
           <button
             onClick={onOpenScanner}
-            className="w-full liquid-glass liquid-glass-interactive rounded-xl p-5 flex flex-col items-center gap-2 text-center border-dashed"
+            className="mt-3 w-full rounded-2xl border-2 border-dashed border-avocado-300 dark:border-avocado-700 p-6 flex flex-col items-center gap-2 text-center hover:bg-avocado-50/50 dark:hover:bg-white/5"
           >
-            <span className="w-11 h-11 rounded-xl liquid-lens-btn flex items-center justify-center">
-              <Camera className="w-5 h-5" />
-            </span>
-            <span className="text-sm font-bold">
-              {lang === 'es' ? 'Escanea tu primera factura' : 'Scan your first receipt'}
-            </span>
-            <span className="hidden sm:block text-xs text-[var(--text-muted)] max-w-xs">
+            <Camera className="w-7 h-7 text-avocado-600" />
+            <span className="font-semibold">{lang === 'es' ? 'Escanea tu primera factura' : 'Scan your first receipt'}</span>
+            <span className="text-sm text-[var(--text-muted)] max-w-xs">
               {lang === 'es'
                 ? 'Con cada compra la app aprende cuánto consumen en casa y te avisa antes de que algo se acabe.'
                 : 'Each purchase teaches the app how fast your home uses things.'}
             </span>
           </button>
-        )}
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          {purchases.slice(0, 4).map((purchase) => {
-            const member = household.members.find((m) => m.id === purchase.createdBy);
-            return (
-              <div
-                key={purchase.id}
-                onClick={() => onInspectPurchase(purchase)}
-                className="liquid-glass liquid-glass-interactive rounded-xl p-3 flex flex-col justify-between gap-2 group"
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-avocado-500/10 text-avocado-600 dark:text-avocado-400 inline-block truncate max-w-full">
-                      {purchase.supermarket}
+        ) : (
+          <ul className="mt-2 divide-y divide-[var(--glass-border)]">
+            {recent.map((purchase) => {
+              const member = household.members.find((m) => m.id === purchase.createdBy);
+              const kind = receiptFileKind(purchase.receiptImageUrl);
+              return (
+                <li key={purchase.id}>
+                  <button onClick={() => onInspectPurchase(purchase)} className="w-full py-3 flex items-center gap-3 text-left group">
+                    <span className="w-11 h-11 rounded-xl bg-avocado-50 dark:bg-avocado-500/10 overflow-hidden flex items-center justify-center shrink-0">
+                      {kind === 'image' ? (
+                        <img src={purchase.receiptImageUrl} alt="" className="w-full h-full object-cover object-top" />
+                      ) : (
+                        <Receipt className="w-5 h-5 text-avocado-600 dark:text-avocado-400" />
+                      )}
                     </span>
-                    <h4 className="text-base font-extrabold mt-1 tracking-tight">
-                      {formatCurrency(purchase.totalAmount, cur)}
-                    </h4>
-                    <p className="text-[10px] text-[var(--text-muted)]">{purchase.purchaseDate}</p>
-                  </div>
+                    <span className="flex-1 min-w-0">
+                      <span className="block font-semibold text-sm truncate group-hover:text-avocado-700 dark:group-hover:text-avocado-300">
+                        {purchase.supermarket}
+                      </span>
+                      <span className="block text-xs text-[var(--text-muted)] truncate">
+                        {purchase.purchaseDate} · {purchase.items.length} {lang === 'es' ? 'productos' : 'items'}
+                        {member ? ` · ${member.name.split(' ')[0]}` : ''}
+                      </span>
+                    </span>
+                    <span className="font-semibold text-sm tabular-nums">{formatCurrency(purchase.totalAmount, cur)}</span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
 
-                  {/* Receipt Mini Thumbnail */}
-                  <div className="w-9 h-11 rounded-md overflow-hidden border border-[var(--glass-border)] bg-white shrink-0 relative">
-                    {receiptFileKind(purchase.receiptImageUrl) === 'image' ? (
-                      <img
-                        src={purchase.receiptImageUrl}
-                        alt="Factura"
-                        className="w-full h-full object-cover object-top"
-                      />
-                    ) : (
-                      <span className="w-full h-full flex items-center justify-center text-[8px] font-bold text-slate-600 uppercase">
-                        {receiptFileKind(purchase.receiptImageUrl)}
+      {/* Running low */}
+      <section className="card p-5">
+        <div className="flex items-center justify-between">
+          <h3 className="font-bold">{lang === 'es' ? 'Por reponer pronto' : 'Running low'}</h3>
+          <button
+            onClick={() => onNavigateTab('restock-ai')}
+            className="text-sm font-semibold text-avocado-700 dark:text-avocado-300 min-h-9"
+          >
+            {lang === 'es' ? 'Ver todo' : 'See all'}
+          </button>
+        </div>
+        {runningLowItems.length === 0 ? (
+          <p className="mt-3 text-sm text-[var(--text-muted)]">
+            {lang === 'es'
+              ? `Cuando compres un producto ${household.minPurchasesForPrediction} veces, aquí verás cuándo se va a acabar.`
+              : `Buy a product ${household.minPurchasesForPrediction} times to see when it will run out.`}
+          </p>
+        ) : (
+          <ul className="mt-2 divide-y divide-[var(--glass-border)]">
+            {runningLowItems.map((pred) => {
+              const isUrgent = pred.estimatedDaysRemaining <= household.restockAlertDays;
+              const days = Math.max(0, Math.round(pred.estimatedDaysRemaining));
+              return (
+                <li key={pred.canonicalName} className="py-3">
+                  <div className="flex items-center gap-2.5">
+                    <span className={`w-2 h-2 rounded-full shrink-0 ${isUrgent ? 'bg-coral-500' : 'bg-avocado-400'}`} />
+                    <span className="flex-1 min-w-0 text-sm font-medium truncate" title={pred.aiExplanation}>
+                      {pred.canonicalName}
+                    </span>
+                    <span className={`text-xs shrink-0 ${isUrgent ? 'text-coral-500 font-semibold' : 'text-[var(--text-muted)]'}`}>
+                      {daysLabel(days)}
+                    </span>
+                  </div>
+                  <div className="flex gap-2 mt-2 pl-[18px]">
+                    <button
+                      onClick={() => onRestockFeedback(pred.canonicalName, 'ran_out')}
+                      className="h-8 px-3 rounded-lg text-xs font-semibold bg-coral-500/10 text-coral-500 hover:bg-coral-500/15"
+                    >
+                      Se acabó
+                    </button>
+                    <button
+                      onClick={() => onRestockFeedback(pred.canonicalName, 'still_have_some')}
+                      className="h-8 px-3 rounded-lg text-xs font-semibold bg-avocado-50 text-avocado-700 hover:bg-avocado-100 dark:bg-avocado-500/10 dark:text-avocado-300"
+                    >
+                      Aún queda
+                    </button>
+                    <span className="ml-auto text-[11px] text-[var(--text-muted)] self-center hidden sm:inline">
+                      {translateConfidence(pred.confidenceLevel, lang)}
+                    </span>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
+
+      {/* Category spend */}
+      <section className="card p-5 xl:col-span-2">
+        <div className="flex items-center justify-between">
+          <h3 className="font-bold">{lang === 'es' ? 'Gasto por categoría' : 'Spend by category'}</h3>
+          <button
+            onClick={() => onNavigateTab('analytics')}
+            className="text-sm font-semibold text-avocado-700 dark:text-avocado-300 min-h-9"
+          >
+            {lang === 'es' ? 'Analíticas' : 'Analytics'}
+          </button>
+        </div>
+        <ul className="mt-3 grid sm:grid-cols-2 gap-x-8 gap-y-3">
+          {categoryRows.slice(0, 8).map((cat) => {
+            const isOver = cat.spent > cat.monthlyAllocation;
+            return (
+              <li key={cat.name}>
+                <div className="flex items-center justify-between gap-2 text-sm">
+                  <span className="flex items-center gap-2 min-w-0">
+                    <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: cat.color }} />
+                    <span className="truncate">{translateCategory(cat.name, lang)}</span>
+                    {isOver && (
+                      <span className="text-[10px] px-1.5 rounded-full bg-coral-500/15 text-coral-500 font-semibold flex items-center gap-0.5 shrink-0">
+                        <AlertCircle className="w-3 h-3" /> {lang === 'es' ? 'Excedido' : 'Over'}
                       </span>
                     )}
-                    <div className="absolute inset-0 bg-slate-900/35 opacity-0 group-hover:opacity-100 flex items-center justify-center transition">
-                      <Eye className="w-3 h-3 text-white" />
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between pt-2 border-t border-[var(--glass-border)] text-[11px]">
-                  {member && (
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <Avatar name={member.name} src={member.avatarUrl} color={member.accentColor} className="w-5 h-5" />
-                      <span className="font-medium truncate">{member.name.split(' ')[0]}</span>
-                    </div>
-                  )}
-                  <span className="text-[10px] text-[var(--text-muted)] font-medium shrink-0">
-                    {purchase.items.length} ítems →
+                  </span>
+                  <span className="text-xs text-[var(--text-muted)] tabular-nums shrink-0">
+                    <strong className="text-[var(--text-primary)] font-semibold">{formatCurrency(cat.spent, cur, true)}</strong> /{' '}
+                    {formatCurrency(cat.monthlyAllocation, cur, true)}
                   </span>
                 </div>
-              </div>
+                <div className="h-2 rounded-full bg-[var(--glass-bg-subtle)] mt-1.5 overflow-hidden">
+                  <div
+                    className="h-full rounded-full transition-all duration-700"
+                    style={{ width: `${Math.max(3, cat.pct)}%`, backgroundColor: isOver ? '#e96f4e' : cat.color }}
+                  />
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      </section>
+
+      {/* Quick add */}
+      <section className="card p-5">
+        <div className="flex items-center justify-between">
+          <h3 className="font-bold">{lang === 'es' ? 'Agregar rápido a la lista' : 'Quick add to list'}</h3>
+          <button
+            onClick={() => onNavigateTab('shopping-list')}
+            className="text-sm font-semibold text-avocado-700 dark:text-avocado-300 min-h-9"
+          >
+            {lang === 'es' ? 'Lista' : 'List'}
+          </button>
+        </div>
+        <div className="flex flex-wrap gap-2 mt-3">
+          {FREQUENT_QUICK_CHIPS.map((chip) => {
+            const isAdded = recentlyAddedChip === chip.canonicalName;
+            return (
+              <button
+                key={chip.canonicalName}
+                onClick={() => handleChipTap(chip)}
+                className={`min-h-10 px-3 rounded-full text-sm font-medium flex items-center gap-1.5 border transition ${
+                  isAdded
+                    ? 'bg-avocado-600 border-avocado-600 text-white'
+                    : 'border-[var(--input-border)] hover:border-avocado-400 hover:bg-avocado-50 dark:hover:bg-white/5'
+                }`}
+              >
+                {isAdded ? <Check className="w-4 h-4" /> : <Plus className="w-4 h-4 text-avocado-600 dark:text-avocado-400" />}
+                {chip.canonicalName}
+              </button>
             );
           })}
         </div>
-      </div>
+      </section>
     </div>
   );
 };

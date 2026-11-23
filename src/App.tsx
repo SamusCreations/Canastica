@@ -53,9 +53,14 @@ function captureInviteFromUrl(): string | null {
   return readStorage(PENDING_INVITE_KEY, sessionStorage);
 }
 
-function initialTheme(): 'light' | 'dark' {
+export type ThemePref = 'system' | 'light' | 'dark';
+
+function initialThemePref(): ThemePref {
   const saved = readStorage(THEME_KEY);
-  if (saved === 'light' || saved === 'dark') return saved;
+  return saved === 'light' || saved === 'dark' || saved === 'system' ? saved : 'system';
+}
+
+function systemTheme(): 'light' | 'dark' {
   return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 }
 
@@ -73,7 +78,18 @@ function Splash({ label }: { label: string }) {
 export function App() {
   const sb = useMemo(() => getSupabaseClient(), []);
 
-  const [theme, setTheme] = useState<'light' | 'dark'>(initialTheme);
+  const [themePref, setThemePref] = useState<ThemePref>(initialThemePref);
+  const [osTheme, setOsTheme] = useState<'light' | 'dark'>(systemTheme);
+  const theme: 'light' | 'dark' = themePref === 'system' ? osTheme : themePref;
+
+  // Follow the phone/computer setting while the preference is "Sistema"
+  useEffect(() => {
+    const mq = window.matchMedia?.('(prefers-color-scheme: dark)');
+    if (!mq) return;
+    const onChange = () => setOsTheme(mq.matches ? 'dark' : 'light');
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
   const [isDemo, setIsDemo] = useState<boolean>(() => readStorage(DEMO_MODE_KEY) === '1');
   const [session, setSession] = useState<Session | null>(null);
   const [authReady, setAuthReady] = useState<boolean>(!sb);
@@ -92,9 +108,12 @@ export function App() {
     htmlEl.classList.toggle('light', theme !== 'dark');
     document
       .querySelector('meta[name="theme-color"]')
-      ?.setAttribute('content', theme === 'dark' ? '#0d131f' : '#ffffff');
-    writeStorage(THEME_KEY, theme);
+      ?.setAttribute('content', theme === 'dark' ? '#0f1709' : '#f7f9f3');
   }, [theme]);
+
+  useEffect(() => {
+    writeStorage(THEME_KEY, themePref);
+  }, [themePref]);
 
   // Supabase Auth session
   useEffect(() => {
@@ -194,7 +213,7 @@ export function App() {
     }
   };
 
-  const toggleTheme = () => setTheme((t) => (t === 'light' ? 'dark' : 'light'));
+  const toggleTheme = () => setThemePref(theme === 'light' ? 'dark' : 'light');
 
 
   // ------------------------------------------------------------------------
@@ -209,6 +228,8 @@ export function App() {
           sb={null}
           memberships={[]}
           theme={theme}
+          themePref={themePref}
+          onSetThemePref={setThemePref}
           onToggleTheme={toggleTheme}
           onSwitchHousehold={() => undefined}
           onJoinHousehold={async () => null}
@@ -308,6 +329,8 @@ export function App() {
         householdId={householdId}
         memberships={memberships}
         theme={theme}
+        themePref={themePref}
+        onSetThemePref={setThemePref}
         onToggleTheme={toggleTheme}
         onSwitchHousehold={selectHousehold}
         onJoinHousehold={handleJoinFromWorkspace}

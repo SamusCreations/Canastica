@@ -8,20 +8,18 @@ import {
   ChevronRight,
   Copy,
   Crown,
-  Lock,
   Plus,
   ShieldCheck,
-  Store,
   UserPlus,
   Users,
   Wallet,
 } from 'lucide-react';
+import { Button, Field, TextInput } from './ui/Form';
 import {
   ExpenseSettlement,
   Household,
   Purchase,
   SupermarketStore,
-  SupermarketType,
   UserRole,
 } from '../types/grocery';
 import { formatCurrency } from '../utils/formatters';
@@ -39,11 +37,11 @@ interface HouseholdAndSplitsViewProps {
   purchases: Purchase[];
   settlements: ExpenseSettlement[];
   onSwitchCurrentMember: (memberId: string) => void;
-  onUpdateMonthlyBudget: (newBudget: number) => void;
   onUpdateMemberRole: (memberId: string, role: UserRole) => void;
   onAddMember: (name: string, email: string) => void;
   onJoinHousehold?: (inviteCode: string) => Promise<string | null>;
   onCreateSupermarket: (store: Omit<SupermarketStore, 'id'>) => void;
+  onOpenSettings?: () => void;
   /** 'shared' or the id of the member the item belongs to */
   onAssignItem: (purchaseId: string, itemId: string, assignee: string) => void;
   onRecordSettlement: (fromMemberId: string, toMemberId: string, amount: number, details: SettleDetails) => void;
@@ -57,11 +55,10 @@ export const HouseholdAndSplitsView: React.FC<HouseholdAndSplitsViewProps> = ({
   purchases,
   settlements,
   onSwitchCurrentMember,
-  onUpdateMonthlyBudget,
   onUpdateMemberRole,
   onAddMember,
   onJoinHousehold,
-  onCreateSupermarket,
+  onOpenSettings,
   onAssignItem,
   onRecordSettlement,
   loadActivity = null,
@@ -69,15 +66,12 @@ export const HouseholdAndSplitsView: React.FC<HouseholdAndSplitsViewProps> = ({
   const [subTab, setSubTab] = useState<'splits' | 'settings' | 'activity'>('splits');
   const [itemPage, setItemPage] = useState(0);
   const [copiedInvite, setCopiedInvite] = useState(false);
-  const [budgetDraft, setBudgetDraft] = useState(String(household.monthlyBudget));
   const [newMemberName, setNewMemberName] = useState('');
   const [newMemberEmail, setNewMemberEmail] = useState('');
   const [joinCodeInput, setJoinCodeInput] = useState('');
   const [joinStatusMsg, setJoinStatusMsg] = useState<string | null>(null);
 
   // Quick custom supermarket creator
-  const [customStoreName, setCustomStoreName] = useState('');
-  const [customStoreType, setCustomStoreType] = useState<SupermarketType>('Abastecedor / Pulpería');
 
   const cur = household.currency;
   const currentMember =
@@ -595,169 +589,106 @@ export const HouseholdAndSplitsView: React.FC<HouseholdAndSplitsViewProps> = ({
               <label className="text-xs font-bold text-[var(--text-secondary)] flex items-center gap-1.5">
                 <UserPlus className="w-3.5 h-3.5 text-avocado-600 dark:text-avocado-400" /> Invitar Nuevo Miembro al Hogar
               </label>
-              <div className="flex flex-col sm:flex-row gap-2">
-                <input
-                  type="text"
-                  disabled={!isAdmin}
-                  value={newMemberName}
-                  onChange={(e) => setNewMemberName(e.target.value)}
-                  placeholder="Nombre (ej. Lucas Solís)"
-                  className="liquid-input flex-1 px-3 py-1.5 rounded-lg text-xs disabled:opacity-50"
-                />
-                <input
-                  type="email"
-                  disabled={!isAdmin}
-                  value={newMemberEmail}
-                  onChange={(e) => setNewMemberEmail(e.target.value)}
-                  placeholder="lucas@hogar.cr"
-                  className="liquid-input flex-1 px-3 py-1.5 rounded-lg text-xs disabled:opacity-50"
-                />
-                <button
-                  disabled={!isAdmin || !newMemberName.trim()}
-                  onClick={() => {
-                    onAddMember(
-                      newMemberName.trim(),
-                      newMemberEmail.trim() ||
-                        `${newMemberName.toLowerCase().replace(/\s+/g, '')}@canastica.cr`
-                    );
-                    setNewMemberName('');
-                    setNewMemberEmail('');
-                  }}
-                  className="liquid-lens-btn px-3.5 py-1.5 rounded-lg text-xs font-bold flex items-center justify-center gap-1 disabled:opacity-40 shrink-0"
-                >
-                  <Plus className="w-3.5 h-3.5" /> Añadir
-                </button>
-              </div>
+              <form
+                className="grid sm:grid-cols-[1fr_1fr_auto] gap-2 sm:items-end"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (!isAdmin || !newMemberName.trim()) return;
+                  onAddMember(
+                    newMemberName.trim(),
+                    newMemberEmail.trim() || `${newMemberName.toLowerCase().replace(/\s+/g, '')}@canastica.cr`
+                  );
+                  setNewMemberName('');
+                  setNewMemberEmail('');
+                }}
+              >
+                <Field label="Nombre">
+                  {(id) => (
+                    <TextInput
+                      id={id}
+                      disabled={!isAdmin}
+                      value={newMemberName}
+                      onChange={(e) => setNewMemberName(e.target.value)}
+                      placeholder="Ej. Lucas Solís"
+                      enterKeyHint="next"
+                    />
+                  )}
+                </Field>
+                <Field label="Correo (opcional)">
+                  {(id) => (
+                    <TextInput
+                      id={id}
+                      type="email"
+                      inputMode="email"
+                      disabled={!isAdmin}
+                      value={newMemberEmail}
+                      onChange={(e) => setNewMemberEmail(e.target.value)}
+                      placeholder="lucas@hogar.cr"
+                      enterKeyHint="done"
+                    />
+                  )}
+                </Field>
+                <Button type="submit" disabled={!isAdmin || !newMemberName.trim()} className="min-h-12">
+                  <Plus className="w-4 h-4" /> Añadir
+                </Button>
+              </form>
             </div>
             )}
           </div>
 
-          {/* Right: Budget, Quick Store Creator & Join Code (5 cols) */}
-          <div className="lg:col-span-5 liquid-glass rounded-xl p-4 flex flex-col justify-between space-y-3.5">
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-bold flex items-center gap-2">
-                  <ShieldCheck className="w-4 h-4 text-purple-600 dark:text-purple-400" />
-                  Configuración del Hogar
-                </h3>
-                <span
-                  className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${
-                    isAdmin
-                      ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
-                      : 'bg-amber-500/15 text-amber-700 dark:text-amber-300'
-                  }`}
-                >
-                  {isAdmin ? 'Admin' : 'Lectura'}
+          {/* Right: join another household + shortcut to settings (5 cols) */}
+          <div className="lg:col-span-5 space-y-4">
+            <div className="card p-5 space-y-4">
+              <div>
+                <h3 className="font-bold">Unirse a otro hogar</h3>
+                <p className="text-sm text-[var(--text-muted)]">Pide el código a alguien de ese hogar.</p>
+              </div>
+              <form
+                className="space-y-3"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void handleJoin();
+                }}
+              >
+                <Field label="Código de invitación" hint="Tiene la forma GLS-XXXXX.">
+                  {(id) => (
+                    <TextInput
+                      id={id}
+                      value={joinCodeInput}
+                      onChange={(e) => setJoinCodeInput(e.target.value.toUpperCase())}
+                      placeholder="GLS-XXXXX"
+                      autoCapitalize="characters"
+                      autoComplete="off"
+                      enterKeyHint="go"
+                      className="font-mono uppercase tracking-wider"
+                    />
+                  )}
+                </Field>
+                <Button type="submit" variant="soft" block disabled={joinBusy || !joinCodeInput.trim()}>
+                  Unirme al hogar
+                </Button>
+                {joinStatusMsg && (
+                  <p className="text-sm text-avocado-700 dark:text-avocado-300 font-semibold" role="status">
+                    {joinStatusMsg}
+                  </p>
+                )}
+              </form>
+            </div>
+            {onOpenSettings && (
+              <button
+                onClick={onOpenSettings}
+                className="card w-full p-5 flex items-center gap-4 text-left hover:border-avocado-300 dark:hover:border-avocado-700 transition"
+              >
+                <span className="w-10 h-10 rounded-xl bg-avocado-50 dark:bg-avocado-500/10 text-avocado-700 dark:text-avocado-300 flex items-center justify-center shrink-0">
+                  <ShieldCheck className="w-5 h-5" />
                 </span>
-              </div>
-
-              {!isAdmin && (
-                <div className="p-2.5 rounded-lg bg-amber-500/15 text-[11px] text-amber-800 dark:text-amber-200 flex items-center gap-2">
-                  <Lock className="w-3.5 h-3.5 shrink-0" />
-                  {isCloud
-                    ? 'Solo un administrador del hogar puede editar el presupuesto mensual.'
-                    : 'Cambia a un perfil Admin para editar el presupuesto mensual.'}
-                </div>
-              )}
-
-              {/* Monthly Budget Editor in CRC */}
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-[var(--text-secondary)] block">
-                  Presupuesto Mensual (en Colones ₡)
-                </label>
-                <div className="flex gap-2">
-                  <input
-                    type="number"
-                    step="5000"
-                    disabled={!isAdmin}
-                    value={budgetDraft}
-                    onChange={(e) => setBudgetDraft(e.target.value)}
-                    className="liquid-input flex-1 px-3 py-1.5 rounded-lg text-xs font-bold disabled:opacity-50"
-                  />
-                  <button
-                    disabled={!isAdmin}
-                    onClick={() => {
-                      const val = parseFloat(budgetDraft);
-                      if (val > 0) onUpdateMonthlyBudget(val);
-                    }}
-                    className="liquid-lens-btn px-3.5 py-1.5 rounded-lg text-xs font-bold disabled:opacity-40"
-                  >
-                    Guardar
-                  </button>
-                </div>
-              </div>
-
-              {/* Quick Custom Supermarket Creator */}
-              <div className="space-y-1.5 pt-2.5 border-t border-[var(--glass-border)]">
-                <label className="text-xs font-semibold text-[var(--text-secondary)] flex items-center gap-1.5">
-                  <Store className="w-3.5 h-3.5 text-avocado-600 dark:text-avocado-400" /> Registrar Nuevo Supermercado
-                </label>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  <input
-                    type="text"
-                    value={customStoreName}
-                    onChange={(e) => setCustomStoreName(e.target.value)}
-                    placeholder="Ej. Super El Progreso"
-                    className="liquid-input px-3 py-1.5 rounded-lg text-xs"
-                  />
-                  <select
-                    value={customStoreType}
-                    onChange={(e) => setCustomStoreType(e.target.value as SupermarketType)}
-                    className="liquid-input px-2.5 py-1.5 rounded-lg text-xs"
-                  >
-                    <option value="Abastecedor / Pulpería">Abastecedor / Pulpería</option>
-                    <option value="Feria del Agricultor">Feria del Agricultor</option>
-                    <option value="Carnicería / Especialidad">Carnicería / Especialidad</option>
-                    <option value="Cadena Nacional">Cadena Nacional</option>
-                    <option value="Club Mayorista">Club Mayorista</option>
-                  </select>
-                </div>
-                <button
-                  disabled={!customStoreName.trim()}
-                  onClick={() => {
-                    onCreateSupermarket({
-                      name: customStoreName.trim(),
-                      type: customStoreType,
-                      color: '#0284c7',
-                      locationHint: 'Comercio del Hogar',
-                      isCustom: true,
-                    });
-                    setCustomStoreName('');
-                  }}
-                  className="w-full py-1.5 rounded-lg liquid-glass-subtle liquid-glass-interactive text-xs font-bold text-avocado-600 dark:text-avocado-400 flex items-center justify-center gap-1 disabled:opacity-40"
-                >
-                  <Plus className="w-3.5 h-3.5" /> Crear Comercio
-                </button>
-              </div>
-            </div>
-
-            {/* Join Household via Invite Code */}
-            <div className="pt-2.5 border-t border-[var(--glass-border)] space-y-1.5">
-              <label className="text-xs font-semibold text-[var(--text-secondary)] block">
-                Unirse a Otro Hogar con Código
-              </label>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={joinCodeInput}
-                  onChange={(e) => setJoinCodeInput(e.target.value.toUpperCase())}
-                  placeholder="Código (ej. GLS-829)"
-                  className="liquid-input flex-1 px-3 py-1.5 rounded-lg text-xs font-mono uppercase"
-                />
-                <button
-                  disabled={joinBusy}
-                  onClick={() => void handleJoin()}
-                  className="px-3 py-1.5 rounded-lg liquid-glass-subtle liquid-glass-interactive text-xs font-bold"
-                >
-                  Unirse
-                </button>
-              </div>
-              {joinStatusMsg && (
-                <p className="text-xs text-avocado-700 dark:text-avocado-300 font-semibold">
-                  {joinStatusMsg}
-                </p>
-              )}
-            </div>
+                <span className="flex-1 min-w-0">
+                  <span className="block font-semibold">Presupuesto, roles y comercios</span>
+                  <span className="block text-sm text-[var(--text-muted)]">Se cambian en Ajustes</span>
+                </span>
+                <ChevronRight className="w-4 h-4 text-[var(--text-muted)]" />
+              </button>
+            )}
           </div>
         </div>
       )}

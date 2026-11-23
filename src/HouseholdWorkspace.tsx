@@ -1,26 +1,30 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
-  Activity,
   AlertTriangle,
   BarChart3,
   Bell,
   Bot,
-  Camera,
   CheckCircle2,
-  Globe,
   LayoutDashboard,
+  LayoutGrid,
+  ListChecks,
   Loader2,
   Moon,
-  Refrigerator,
+  Package,
   RefreshCw,
+  ScanLine,
+  Settings,
   ShoppingCart,
+  Sparkles,
   Sun,
   Users,
   WifiOff,
   X,
 } from 'lucide-react';
-import { AccountSheet } from './components/AccountSheet';
+import { SettingsView, SettingsSectionId } from './components/SettingsView';
+import { Sheet } from './components/ui/Sheet';
+import type { ThemePref } from './App';
 import { AIAssistantDrawer } from './components/AIAssistantDrawer';
 import { AnalyticsAndPricesView } from './components/AnalyticsAndPricesView';
 import { Avatar } from './components/Avatar';
@@ -210,8 +214,8 @@ function findListPantryEntry(
 const DEMO_STATE_STORAGE_KEY = 'glasscart_household_state_crc_v2';
 const PREFS_STORAGE_KEY = 'glasscart_view_prefs_v1';
 
-type TabId = 'dashboard' | 'shopping-list' | 'restock-ai' | 'pantry' | 'analytics' | 'household';
-const TAB_IDS: TabId[] = ['dashboard', 'shopping-list', 'restock-ai', 'pantry', 'analytics', 'household'];
+type TabId = 'dashboard' | 'shopping-list' | 'restock-ai' | 'pantry' | 'analytics' | 'household' | 'settings';
+const TAB_IDS: TabId[] = ['dashboard', 'shopping-list', 'restock-ai', 'pantry', 'analytics', 'household', 'settings'];
 
 interface PersistedHouseholdState {
   household: Household;
@@ -296,6 +300,8 @@ interface HouseholdWorkspaceProps {
   householdId?: string;
   memberships: HouseholdMembership[];
   theme: 'light' | 'dark';
+  themePref: ThemePref;
+  onSetThemePref: (t: ThemePref) => void;
   onToggleTheme: () => void;
   onSwitchHousehold: (householdId: string) => void;
   onJoinHousehold: (inviteCode: string) => Promise<string | null>;
@@ -311,6 +317,8 @@ export function HouseholdWorkspace({
   householdId = '',
   memberships,
   theme,
+  themePref,
+  onSetThemePref,
   onToggleTheme,
   onSwitchHousehold,
   onJoinHousehold,
@@ -394,7 +402,8 @@ export function HouseholdWorkspace({
   const [isAssistantOpen, setIsAssistantOpen] = useState(false);
   const [assistantInitialPrompt, setAssistantInitialPrompt] = useState<string | null>(null);
   const [isNotifOpen, setIsNotifOpen] = useState(false);
-  const [isAccountOpen, setIsAccountOpen] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<SettingsSectionId | null>(null);
+  const [isMoreOpen, setIsMoreOpen] = useState(false);
   // List shared from WhatsApp / pasted, waiting for review
   const [sharedText, setSharedText] = useState<string | null>(() => getPendingSharedText());
   const [isSupermarketMode, setIsSupermarketMode] = useState(false);
@@ -1324,25 +1333,25 @@ export function HouseholdWorkspace({
   }[] = [
     {
       id: 'dashboard',
-      label: lang === 'es' ? 'Panel Principal' : 'Dashboard',
+      label: lang === 'es' ? 'Inicio' : 'Home',
       shortLabel: lang === 'es' ? 'Inicio' : 'Home',
       subtitle: lang === 'es' ? 'Presupuesto, IA y compras' : 'Budget, AI & purchases',
       icon: LayoutDashboard,
     },
     {
       id: 'shopping-list',
-      label: lang === 'es' ? 'Lista de Compras' : 'Shopping List',
+      label: lang === 'es' ? 'Lista de compras' : 'Shopping list',
       shortLabel: lang === 'es' ? 'Lista' : 'List',
       subtitle: lang === 'es' ? 'Compartida y autotachado' : 'Shared & auto-cross-off',
-      icon: ShoppingCart,
+      icon: ListChecks,
       badge: pendingShoppingCount,
     },
     {
       id: 'restock-ai',
-      label: lang === 'es' ? 'Reposición IA' : 'Restock AI',
+      label: lang === 'es' ? 'Reposición' : 'Restock',
       shortLabel: lang === 'es' ? 'Reponer' : 'Restock',
       subtitle: lang === 'es' ? 'Unidades base y consumo' : 'Base units & burn rate',
-      icon: Activity,
+      icon: Sparkles,
       badge: predictions.filter((p) => p.estimatedDaysRemaining <= household.restockAlertDays)
         .length,
     },
@@ -1351,25 +1360,29 @@ export function HouseholdWorkspace({
       label: lang === 'es' ? 'Despensa' : 'Pantry',
       shortLabel: lang === 'es' ? 'Despensa' : 'Pantry',
       subtitle: lang === 'es' ? 'Caducidad y existencias' : 'Expiry & stock tracker',
-      icon: Refrigerator,
+      icon: Package,
     },
     {
       id: 'analytics',
-      label: lang === 'es' ? 'Analíticas y Comercios' : 'Analytics & Stores',
+      label: lang === 'es' ? 'Analíticas y súpers' : 'Analytics & stores',
       shortLabel: lang === 'es' ? 'Gastos' : 'Spend',
       subtitle: lang === 'es' ? 'Precios, comercios y CSV' : 'Prices, stores & CSV',
       icon: BarChart3,
     },
     {
       id: 'household',
-      label: lang === 'es' ? 'Hogar y Saldos' : 'Household & Splits',
+      label: lang === 'es' ? 'Hogar y saldos' : 'Household & splits',
       shortLabel: lang === 'es' ? 'Hogar' : 'Home',
       subtitle: lang === 'es' ? 'Miembros, roles y saldos' : 'Members, roles & splits',
       icon: Users,
     },
   ];
 
-  const activeNavMeta = navItems.find((n) => n.id === activeTab) || navItems[0];
+  const activeNavMeta =
+    activeTab === 'settings'
+      ? { label: lang === 'es' ? 'Ajustes' : 'Settings' }
+      : navItems.find((n) => n.id === activeTab) || navItems[0];
+  const restockBadge = navItems.find((n) => n.id === 'restock-ai')?.badge ?? 0;
 
   // Plain module state (no re-render): tells problem reports where the user is
   setReportScreenContext({
@@ -1382,8 +1395,8 @@ export function HouseholdWorkspace({
       ? 'Detalle de factura'
       : isAssistantOpen
       ? 'Asistente'
-      : isAccountOpen
-      ? 'Menú de cuenta'
+      : activeTab === 'settings' && settingsSection
+      ? `Ajustes: ${settingsSection}`
       : null,
     householdId: isCloud ? householdId : null,
     language: lang,
@@ -1398,10 +1411,37 @@ export function HouseholdWorkspace({
     Math.round((monthSpent / Math.max(1, household.monthlyBudget)) * 100)
   );
 
+  const handleUpdateMemberRole = (memberId: string, role: UserRole) => {
+    if (isCloud && !isAdmin) {
+      showToast('Solo un administrador puede cambiar roles.');
+      return;
+    }
+    if (
+      isCloud &&
+      role === 'member' &&
+      household.members.filter((m) => m.role === 'admin').length <= 1 &&
+      household.members.find((m) => m.id === memberId)?.role === 'admin'
+    ) {
+      showToast('El hogar necesita al menos un administrador.');
+      return;
+    }
+    setHousehold((prev) => ({
+      ...prev,
+      members: prev.members.map((m) => (m.id === memberId ? { ...m, role } : m)),
+    }));
+    persist((client) => updateMemberRole(client, householdId, memberId, role));
+  };
+
   const selectTab = (tab: TabId) => {
     setActiveTab(tab);
+    setIsMoreOpen(false);
     setIsNotifOpen(false);
     document.getElementById('main-scroll')?.scrollTo({ top: 0 });
+  };
+
+  const openSettings = (section: SettingsSectionId | null = null) => {
+    setSettingsSection(section);
+    selectTab('settings');
   };
 
   // ------------------------------------------------------------------------
@@ -1473,222 +1513,175 @@ export function HouseholdWorkspace({
     </span>
   );
 
+  const isMoreTab = activeTab === 'restock-ai' || activeTab === 'analytics' || activeTab === 'household' || activeTab === 'settings';
+  const mobileTabs: { id: TabId | 'scan' | 'more'; label: string; icon: typeof LayoutDashboard; badge?: number }[] = [
+    { id: 'dashboard', label: lang === 'es' ? 'Inicio' : 'Home', icon: LayoutDashboard },
+    { id: 'shopping-list', label: lang === 'es' ? 'Lista' : 'List', icon: ListChecks, badge: pendingShoppingCount },
+    { id: 'scan', label: lang === 'es' ? 'Escanear' : 'Scan', icon: ScanLine },
+    { id: 'pantry', label: lang === 'es' ? 'Despensa' : 'Pantry', icon: Package },
+    { id: 'more', label: lang === 'es' ? 'Más' : 'More', icon: LayoutGrid, badge: restockBadge || undefined },
+  ];
+  const todayLabel = new Date().toLocaleDateString(lang === 'es' ? 'es-CR' : 'en-US', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+  });
+
   return (
     <div className="h-dvh w-full overflow-hidden flex bg-[var(--bg-canvas)] text-[var(--text-primary)]">
       {/* ====================================================================
-          Desktop Sidebar
+          Desktop sidebar
           ==================================================================== */}
-      <aside className="hidden lg:flex lg:w-60 shrink-0 flex-col justify-between border-r border-[var(--glass-border)] bg-[var(--bg-sidebar)] p-3 h-full select-none">
-        <div className="space-y-4">
+      <aside className="hidden lg:flex lg:w-64 xl:w-72 shrink-0 flex-col border-r border-[var(--glass-border)] bg-[var(--bg-sidebar)] px-4 py-5 h-full select-none">
+        <button onClick={() => selectTab('dashboard')} className="flex items-center gap-3 min-w-0 px-2 text-left">
+          <BrandMark className="w-10 h-10 rounded-xl" />
+          <div className="min-w-0">
+            <h1 className="text-base font-bold tracking-tight">Canastica</h1>
+            <p className="text-xs text-[var(--text-muted)] truncate">{household.name}</p>
+          </div>
+        </button>
+
+        <button
+          onClick={() => setIsScannerOpen(true)}
+          className="mt-6 h-11 rounded-xl bg-avocado-600 hover:bg-avocado-700 text-white text-sm font-semibold flex items-center justify-center gap-2 transition shadow-sm"
+        >
+          <ScanLine className="w-5 h-5" />
+          {lang === 'es' ? 'Escanear factura' : 'Scan receipt'}
+        </button>
+
+        <nav className="mt-6 space-y-1 flex-1 overflow-y-auto no-scrollbar" aria-label="Secciones">
+          {navItems.map((item) => {
+            const Icon = item.icon;
+            const isActive = activeTab === item.id;
+            return (
+              <button
+                key={item.id}
+                onClick={() => selectTab(item.id)}
+                aria-current={isActive ? 'page' : undefined}
+                className={`w-full h-10 px-3 rounded-lg flex items-center gap-3 text-sm font-medium transition ${
+                  isActive
+                    ? 'bg-avocado-100 text-avocado-800 dark:bg-avocado-500/15 dark:text-avocado-200'
+                    : 'text-[var(--text-secondary)] hover:bg-[var(--glass-bg-hover)]'
+                }`}
+              >
+                <Icon className="w-5 h-5 shrink-0" />
+                <span className="flex-1 text-left truncate">{item.label}</span>
+                {item.badge ? (
+                  <span
+                    className={`min-w-5 h-5 px-1.5 rounded-full text-[11px] font-bold flex items-center justify-center ${
+                      isActive ? 'bg-avocado-600 text-white' : 'bg-[var(--glass-bg-subtle)] text-[var(--text-secondary)]'
+                    }`}
+                  >
+                    {item.badge}
+                  </span>
+                ) : null}
+              </button>
+            );
+          })}
+        </nav>
+
+        <div className="pt-4 space-y-3">
           <button
             onClick={() => selectTab('dashboard')}
-            className="flex items-center gap-2.5 min-w-0 px-1.5 pt-0.5 text-left"
+            className="w-full text-left rounded-xl bg-[var(--glass-bg-subtle)] p-3 space-y-2"
           >
-            <BrandMark className="w-9 h-9 rounded-xl" />
-            <div className="min-w-0">
-              <h1 className="text-sm font-extrabold tracking-tight">Canastica</h1>
-              <p className="text-xs text-[var(--text-muted)] truncate">{household.name}</p>
-            </div>
-          </button>
-
-          <button
-            onClick={() => setIsScannerOpen(true)}
-            className="w-full liquid-lens-btn py-2.5 px-3 rounded-xl text-sm font-bold flex items-center justify-center gap-2"
-          >
-            <Camera className="w-4 h-4" />
-            <span>{lang === 'es' ? 'Escanear factura' : 'Scan receipt'}</span>
-          </button>
-
-          <nav className="space-y-0.5">
-            {navItems.map((item) => {
-              const Icon = item.icon;
-              const isActive = activeTab === item.id;
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => selectTab(item.id)}
-                  aria-current={isActive ? 'page' : undefined}
-                  className={`w-full px-2.5 py-2 rounded-xl text-left flex items-center justify-between gap-2 transition ${
-                    isActive
-                      ? 'bg-avocado-600/10 text-avocado-600 dark:bg-avocado-500/15 dark:text-avocado-400 font-bold'
-                      : 'text-[var(--text-secondary)] hover:bg-[var(--glass-bg-hover)] font-medium'
-                  }`}
-                >
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <Icon
-                      className={`w-4 h-4 shrink-0 ${
-                        isActive ? 'text-avocado-600 dark:text-avocado-400' : 'text-[var(--text-muted)]'
-                      }`}
-                    />
-                    <span className="text-sm truncate">{item.label}</span>
-                  </div>
-                  {item.badge ? (
-                    <span
-                      className={`px-1.5 rounded-full text-[11px] font-bold shrink-0 ${
-                        isActive
-                          ? 'bg-avocado-600 text-white'
-                          : 'bg-slate-200 dark:bg-slate-800 text-[var(--text-secondary)]'
-                      }`}
-                    >
-                      {item.badge}
-                    </span>
-                  ) : null}
-                </button>
-              );
-            })}
-          </nav>
-        </div>
-
-        <div className="space-y-2.5 pt-3 border-t border-[var(--glass-border)]">
-          <div className="liquid-glass-subtle rounded-xl p-2.5 space-y-1.5">
             <div className="flex items-center justify-between text-xs">
-              <span className="font-semibold text-[var(--text-secondary)]">
+              <span className="font-semibold text-[var(--text-secondary)] capitalize">
                 {lang === 'es' ? 'Presupuesto' : 'Budget'} {monthName(monthPrefix, lang, true)}
               </span>
-              <span className="font-bold text-avocado-600 dark:text-avocado-400">{monthPct}%</span>
+              <span className="font-bold text-avocado-700 dark:text-avocado-300">{monthPct}%</span>
             </div>
-            <div className="w-full h-1.5 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
-              <div
-                className="h-full rounded-full bg-avocado-600 transition-all duration-500"
-                style={{ width: `${monthPct}%` }}
-              />
+            <div className="w-full h-1.5 rounded-full bg-black/10 dark:bg-white/10 overflow-hidden">
+              <div className="h-full rounded-full bg-avocado-600 transition-all duration-500" style={{ width: `${monthPct}%` }} />
             </div>
-            <div className="flex justify-between text-[11px] text-[var(--text-muted)] font-mono">
+            <div className="flex justify-between text-[11px] text-[var(--text-muted)] tabular-nums">
               <span>{formatCurrency(monthSpent, cur, true)}</span>
               <span>{formatCurrency(household.monthlyBudget, cur, true)}</span>
             </div>
-          </div>
-
+          </button>
           <button
-            onClick={() => setIsAccountOpen(true)}
-            className="w-full liquid-glass-subtle liquid-glass-interactive p-2 rounded-xl flex items-center gap-2 text-left"
+            onClick={() => openSettings()}
+            aria-current={activeTab === 'settings' ? 'page' : undefined}
+            className={`w-full flex items-center gap-3 p-2 rounded-xl text-left transition ${
+              activeTab === 'settings' ? 'bg-avocado-100 dark:bg-avocado-500/15' : 'hover:bg-[var(--glass-bg-hover)]'
+            }`}
           >
-            <Avatar
-              name={currentMember.name}
-              src={currentMember.avatarUrl}
-              color={currentMember.accentColor}
-              className="w-8 h-8"
-            />
-            <div className="min-w-0">
-              <span className="text-sm font-bold block truncate">{currentMember.name}</span>
-              <span className="text-[11px] text-avocado-600 dark:text-avocado-400 font-semibold block">
-                {currentMember.role === 'admin' ? 'Admin' : 'Miembro'}
-              </span>
-            </div>
+            <Avatar name={currentMember.name} src={currentMember.avatarUrl} color={currentMember.accentColor} className="w-9 h-9" />
+            <span className="flex-1 min-w-0">
+              <span className="text-sm font-semibold block truncate">{currentMember.name}</span>
+              <span className="text-xs text-[var(--text-muted)]">{lang === 'es' ? 'Ajustes' : 'Settings'}</span>
+            </span>
+            <Settings className="w-4 h-4 text-[var(--text-muted)]" />
           </button>
         </div>
       </aside>
 
       {/* ====================================================================
-          Main Column
+          Main column (the only scroll area)
           ==================================================================== */}
       <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden">
-        <header className="shrink-0 z-30 border-b border-[var(--glass-border)] bg-[var(--bg-sidebar)] pt-[env(safe-area-inset-top)]">
-          <div className="h-14 px-3 sm:px-4 lg:px-5 flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2.5 min-w-0">
-              <BrandMark className="lg:hidden w-8 h-8 rounded-lg" />
-              <div className="min-w-0">
-                <h2 className="text-base font-bold tracking-tight truncate leading-tight">
-                  {activeNavMeta.label}
-                </h2>
-                <div className="flex items-center gap-1.5 min-w-0">
-                  <span className="lg:hidden text-xs text-[var(--text-muted)] truncate">
-                    {household.name}
-                  </span>
-                  <span className="hidden lg:inline text-xs text-[var(--text-muted)] truncate">
-                    {activeNavMeta.subtitle}
-                  </span>
-                  <span className="hidden sm:inline-flex">{syncBadge}</span>
-                </div>
-              </div>
+        <header className="shrink-0 z-30 bg-[var(--bg-canvas)] pt-[env(safe-area-inset-top)] border-b border-[var(--glass-border)] lg:border-b-0">
+          <div className="mx-auto w-full max-w-[1600px] px-4 sm:px-6 lg:px-8 xl:px-10 h-16 lg:h-20 flex items-center gap-3">
+            <BrandMark className="lg:hidden w-9 h-9 rounded-xl" />
+            <div className="min-w-0 flex-1">
+              <p className="hidden lg:block text-sm text-[var(--text-muted)] first-letter:uppercase">{todayLabel}</p>
+              <h2 className="text-lg lg:text-2xl font-bold tracking-tight truncate leading-tight">{activeNavMeta.label}</h2>
+              <p className="lg:hidden text-xs text-[var(--text-muted)] truncate">{household.name}</p>
             </div>
 
-            <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
-              {/* Quick display toggles on larger screens; on phones they live in the account sheet */}
-              <div className="hidden md:flex items-center gap-1.5">
-                <button
-                  onClick={() => updatePrefs({ currency: cur === 'CRC' ? 'USD' : 'CRC' })}
-                  className="liquid-glass-subtle liquid-glass-interactive h-9 px-2.5 rounded-lg text-xs font-bold text-avocado-600 dark:text-avocado-400"
-                  title="Alternar moneda"
-                >
-                  {cur === 'CRC' ? '₡ CRC' : '$ USD'}
-                </button>
-                <button
-                  onClick={() => updatePrefs({ language: lang === 'es' ? 'en' : 'es' })}
-                  className="liquid-glass-subtle liquid-glass-interactive h-9 px-2.5 rounded-lg text-xs font-semibold flex items-center gap-1"
-                  title="Cambiar idioma"
-                >
-                  <Globe className="w-3.5 h-3.5 text-[var(--text-muted)]" />
-                  <span className="uppercase">{lang}</span>
-                </button>
-                <button
-                  onClick={onToggleTheme}
-                  className="liquid-glass-subtle liquid-glass-interactive w-9 h-9 rounded-lg flex items-center justify-center"
-                  aria-label={theme === 'light' ? 'Modo oscuro' : 'Modo claro'}
-                >
-                  {theme === 'light' ? (
-                    <Moon className="w-4 h-4 text-slate-700" />
-                  ) : (
-                    <Sun className="w-4 h-4 text-amber-400" />
-                  )}
-                </button>
-              </div>
-
+            <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+              <span className="hidden md:inline-flex">{syncBadge}</span>
               <button
                 onClick={() => setIsAssistantOpen(true)}
-                className="liquid-glass-subtle liquid-glass-interactive h-10 sm:h-9 min-w-10 sm:min-w-9 px-2.5 rounded-xl sm:rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 text-avocado-600 dark:text-avocado-400"
-                aria-label="Abrir asistente IA"
+                className="h-10 min-w-10 px-2.5 rounded-xl bg-[var(--bg-primary)] border border-[var(--glass-border)] hover:bg-[var(--glass-bg-hover)] text-sm font-semibold flex items-center justify-center gap-1.5 text-avocado-700 dark:text-avocado-300"
+                aria-label="Abrir asistente"
               >
-                <Bot className="w-4 h-4" />
-                <span className="hidden md:inline">{lang === 'es' ? 'Asistente' : 'Assistant'}</span>
+                <Bot className="w-5 h-5" />
+                <span className="hidden xl:inline">{lang === 'es' ? 'Asistente' : 'Assistant'}</span>
               </button>
-
+              <button
+                onClick={onToggleTheme}
+                className="hidden sm:flex w-10 h-10 rounded-xl bg-[var(--bg-primary)] border border-[var(--glass-border)] hover:bg-[var(--glass-bg-hover)] items-center justify-center"
+                aria-label={theme === 'light' ? 'Modo oscuro' : 'Modo claro'}
+              >
+                {theme === 'light' ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5 text-amber-300" />}
+              </button>
               <div className="relative">
                 <button
                   onClick={handleOpenNotifications}
-                  className="w-10 h-10 sm:w-9 sm:h-9 rounded-xl sm:rounded-lg liquid-glass-subtle liquid-glass-interactive relative flex items-center justify-center"
+                  className="w-10 h-10 rounded-xl bg-[var(--bg-primary)] border border-[var(--glass-border)] hover:bg-[var(--glass-bg-hover)] relative flex items-center justify-center"
                   aria-label="Notificaciones"
                   aria-expanded={isNotifOpen}
                 >
-                  <Bell className="w-4 h-4" />
+                  <Bell className="w-5 h-5" />
                   {unreadNotifCount > 0 && (
-                    <span className="absolute -top-1 -right-1 min-w-4 h-4 px-1 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center">
+                    <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-coral-500 text-white text-[10px] font-bold flex items-center justify-center">
                       {unreadNotifCount > 9 ? '9+' : unreadNotifCount}
                     </span>
                   )}
                 </button>
-
                 {isNotifOpen && (
                   <>
-                    <div
-                      className="fixed inset-0 z-40 bg-slate-900/20 sm:bg-transparent"
-                      onClick={() => setIsNotifOpen(false)}
-                    />
-                    <div className="fixed left-2 right-2 top-[calc(env(safe-area-inset-top)+60px)] sm:absolute sm:left-auto sm:top-auto sm:right-0 sm:mt-2 sm:w-96 liquid-glass-elevated rounded-2xl p-3 space-y-2 z-50 animate-spring-in">
-                      <div className="flex items-center justify-between border-b border-[var(--glass-border)] pb-2">
-                        <span className="text-sm font-bold">Notificaciones</span>
+                    <div className="fixed inset-0 z-40 bg-black/20 sm:bg-transparent" onClick={() => setIsNotifOpen(false)} />
+                    <div className="fixed left-3 right-3 top-[calc(env(safe-area-inset-top)+68px)] sm:absolute sm:left-auto sm:top-auto sm:right-0 sm:mt-2 sm:w-96 card shadow-xl p-3 space-y-2 z-50 animate-spring-in max-h-[70dvh] flex flex-col">
+                      <div className="flex items-center justify-between pb-1 shrink-0">
+                        <span className="text-sm font-bold px-1">Notificaciones</span>
                         <button
                           onClick={() => setIsNotifOpen(false)}
-                          className="w-8 h-8 rounded-lg flex items-center justify-center text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                          className="w-9 h-9 rounded-full flex items-center justify-center text-[var(--text-muted)] hover:bg-[var(--glass-bg-hover)]"
                           aria-label="Cerrar"
                         >
                           <X className="w-4 h-4" />
                         </button>
                       </div>
-                      <div className="space-y-1.5 max-h-[60vh] overflow-y-auto no-scrollbar">
+                      <div className="space-y-1.5 overflow-y-auto overscroll-contain">
                         {notifications.length === 0 && (
-                          <p className="text-sm text-[var(--text-muted)] text-center py-6">
-                            No tienes notificaciones.
-                          </p>
+                          <p className="text-sm text-[var(--text-muted)] text-center py-6">No tienes notificaciones.</p>
                         )}
                         {notifications.map((n) => (
-                          <div key={n.id} className="liquid-glass-subtle rounded-xl p-3 space-y-0.5">
-                            <div className="font-bold text-avocado-600 dark:text-avocado-400 text-sm">
-                              {n.title}
-                            </div>
-                            <p className="text-sm text-[var(--text-secondary)] leading-snug">
-                              {n.message}
-                            </p>
+                          <div key={n.id} className="rounded-xl bg-[var(--glass-bg-subtle)] p-3 space-y-0.5">
+                            <div className="font-semibold text-avocado-700 dark:text-avocado-300 text-sm">{n.title}</div>
+                            <p className="text-sm text-[var(--text-secondary)] leading-snug">{n.message}</p>
                           </div>
                         ))}
                       </div>
@@ -1696,18 +1689,12 @@ export function HouseholdWorkspace({
                   </>
                 )}
               </div>
-
               <button
-                onClick={() => setIsAccountOpen(true)}
-                className="lg:hidden w-10 h-10 rounded-xl flex items-center justify-center"
-                aria-label="Cuenta y ajustes"
+                onClick={() => openSettings()}
+                className="lg:hidden w-10 h-10 rounded-full flex items-center justify-center"
+                aria-label="Ajustes"
               >
-                <Avatar
-                  name={currentMember.name}
-                  src={currentMember.avatarUrl}
-                  color={currentMember.accentColor}
-                  className="w-8 h-8"
-                />
+                <Avatar name={currentMember.name} src={currentMember.avatarUrl} color={currentMember.accentColor} className="w-9 h-9" />
               </button>
             </div>
           </div>
@@ -1715,9 +1702,9 @@ export function HouseholdWorkspace({
 
         <main
           id="main-scroll"
-          className="flex-1 w-full overflow-y-auto overflow-x-hidden overscroll-contain p-3 sm:p-4 pb-[calc(env(safe-area-inset-bottom)+150px)] lg:pb-6"
+          className="flex-1 w-full overflow-y-auto overflow-x-hidden overscroll-contain pb-[calc(env(safe-area-inset-bottom)+112px)] lg:pb-10"
         >
-          <div className="w-full max-w-7xl mx-auto">
+          <div className="mx-auto w-full max-w-[1600px] px-4 sm:px-6 lg:px-8 xl:px-10 pt-4 lg:pt-2">
             {(queuedPending > 0 || queuedReady.length > 0) && (
               <div className="mb-3 liquid-glass rounded-xl px-3 py-2 flex flex-wrap items-center justify-between gap-2 border border-amber-500/30">
                 <span className="text-xs font-semibold">
@@ -1800,6 +1787,9 @@ export function HouseholdWorkspace({
                   setAssistantInitialPrompt(prompt);
                   setIsAssistantOpen(true);
                 }}
+                onOpenSupermarketMode={() => setIsSupermarketMode(true)}
+                pendingListCount={pendingShoppingCount}
+                priceAlertCount={priceAlerts.filter((a) => !a.seen).length}
               />
             )}
 
@@ -1866,27 +1856,8 @@ export function HouseholdWorkspace({
                 purchases={purchases}
                 settlements={settlements}
                 onSwitchCurrentMember={(id) => setCurrentMemberId(id)}
-                onUpdateMonthlyBudget={(newBudget) => updateSettings({ monthlyBudget: newBudget })}
-                onUpdateMemberRole={(memberId, role: UserRole) => {
-                  if (isCloud && !isAdmin) {
-                    showToast('Solo un administrador puede cambiar roles.');
-                    return;
-                  }
-                  if (
-                    isCloud &&
-                    role === 'member' &&
-                    household.members.filter((m) => m.role === 'admin').length <= 1 &&
-                    household.members.find((m) => m.id === memberId)?.role === 'admin'
-                  ) {
-                    showToast('El hogar necesita al menos un administrador.');
-                    return;
-                  }
-                  setHousehold((prev) => ({
-                    ...prev,
-                    members: prev.members.map((m) => (m.id === memberId ? { ...m, role } : m)),
-                  }));
-                  persist((client) => updateMemberRole(client, householdId, memberId, role));
-                }}
+                onOpenSettings={() => openSettings('hogar')}
+                onUpdateMemberRole={handleUpdateMemberRole}
                 onAddMember={(name, email) =>
                   setHousehold((prev) => ({
                     ...prev,
@@ -1949,48 +1920,90 @@ export function HouseholdWorkspace({
                 }}
               />
             )}
+            {activeTab === 'settings' && (
+              <SettingsView
+                mode={isCloud ? 'cloud' : 'demo'}
+                household={household}
+                householdId={householdId}
+                member={currentMember}
+                isAdmin={isAdmin}
+                memberships={memberships}
+                purchases={purchases}
+                themePref={themePref}
+                syncBadge={syncBadge}
+                defaultPriceAlertThreshold={DEFAULT_PRICE_ALERT_THRESHOLD}
+                section={settingsSection}
+                onSectionChange={(s) => {
+                  setSettingsSection(s);
+                  document.getElementById('main-scroll')?.scrollTo({ top: 0 });
+                }}
+                onSetThemePref={onSetThemePref}
+                onChangeCurrency={(c) => updatePrefs({ currency: c })}
+                onChangeLanguage={(l) => updatePrefs({ language: l })}
+                onUpdateSettings={updateSettings}
+                onUpdateMemberRole={handleUpdateMemberRole}
+                onCreateSupermarket={handleCreateSupermarket}
+                onDeleteSupermarket={handleDeleteSupermarket}
+                onSwitchHousehold={onSwitchHousehold}
+                onSwitchDemoMember={
+                  isCloud
+                    ? undefined
+                    : () => {
+                        const idx = household.members.findIndex((m) => m.id === demoMemberId);
+                        const next = household.members[(idx + 1) % household.members.length];
+                        if (next) setCurrentMemberId(next.id);
+                      }
+                }
+                onResetDemoData={() => {
+                  handleResetDemoData();
+                  showToast('Datos de ejemplo restablecidos', 'success');
+                }}
+                onSignOut={onSignOut}
+                onExitDemo={onExitDemo}
+                onOpenEmailInvoices={isCloud && INBOUND_DOMAIN ? () => setIsEmailInvoicesOpen(true) : undefined}
+                onGoToHousehold={() => selectTab('household')}
+                sb={sb}
+                userId={userId}
+                onToast={showToast}
+              />
+            )}
           </div>
         </main>
       </div>
 
-      {/* Mobile Floating Scan Button (sits above the tab bar) */}
-      <button
-        onClick={() => setIsScannerOpen(true)}
-        className="lg:hidden fixed right-4 bottom-[calc(env(safe-area-inset-bottom)+84px)] z-40 liquid-lens-btn h-12 pl-4 pr-5 rounded-full text-white font-bold text-sm flex items-center gap-2 shadow-lg shadow-avocado-600/30"
-        aria-label={lang === 'es' ? 'Escanear factura' : 'Scan receipt'}
-      >
-        <Camera className="w-5 h-5" />
-        <span>{lang === 'es' ? 'Escanear' : 'Scan'}</span>
-      </button>
-
-      {/* Mobile Bottom Tab Bar */}
+      {/* ====================================================================
+          Mobile bottom bar: 4 sections + scan in the middle
+          ==================================================================== */}
       <nav
-        className="lg:hidden fixed bottom-0 inset-x-0 z-30 border-t border-[var(--glass-border)] liquid-glass-elevated rounded-none pb-[env(safe-area-inset-bottom)]"
+        className="lg:hidden fixed bottom-0 inset-x-0 z-30 bg-[var(--bg-primary)]/95 backdrop-blur border-t border-[var(--glass-border)] pb-[env(safe-area-inset-bottom)]"
         aria-label="Secciones"
       >
-        <div className="flex items-stretch justify-around max-w-xl mx-auto px-1">
-          {navItems.map((item) => {
+        <div className="grid grid-cols-5 h-16 max-w-xl mx-auto">
+          {mobileTabs.map((item) => {
             const Icon = item.icon;
-            const isActive = activeTab === item.id;
+            if (item.id === 'scan') {
+              return (
+                <button key="scan" onClick={() => setIsScannerOpen(true)} className="flex items-start justify-center" aria-label={item.label}>
+                  <span className="-mt-6 w-14 h-14 rounded-2xl bg-avocado-600 text-white flex items-center justify-center shadow-lg shadow-avocado-700/30 ring-4 ring-[var(--bg-canvas)] active:scale-95 transition">
+                    <Icon className="w-6 h-6" />
+                  </span>
+                </button>
+              );
+            }
+            const isActive = item.id === 'more' ? isMoreTab || isMoreOpen : activeTab === item.id;
             return (
               <button
                 key={item.id}
-                onClick={() => selectTab(item.id)}
+                onClick={() => (item.id === 'more' ? setIsMoreOpen(true) : selectTab(item.id as TabId))}
                 aria-current={isActive ? 'page' : undefined}
-                className={`flex-1 min-w-0 h-16 flex flex-col items-center justify-center gap-1 text-[11px] font-semibold transition relative ${
-                  isActive ? 'text-avocado-600 dark:text-avocado-400' : 'text-[var(--text-muted)]'
+                className={`relative flex flex-col items-center justify-center gap-1 text-[11px] transition ${
+                  isActive ? 'text-avocado-700 dark:text-avocado-300 font-semibold' : 'text-[var(--text-muted)] font-medium'
                 }`}
               >
-                <span
-                  className={`flex items-center justify-center w-12 h-7 rounded-full transition ${
-                    isActive ? 'bg-avocado-600/12 dark:bg-avocado-500/20' : ''
-                  }`}
-                >
-                  <Icon className="w-5 h-5" />
-                </span>
-                <span className="truncate max-w-full px-0.5">{item.shortLabel}</span>
+                <Icon className="w-6 h-6" />
+                <span className="truncate max-w-full px-0.5">{item.label}</span>
                 {item.badge ? (
-                  <span className="absolute top-1.5 left-1/2 ml-2 min-w-[18px] h-[18px] px-1 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center">
+                  <span className="absolute top-1.5 left-1/2 ml-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-coral-500 text-white text-[10px] font-bold flex items-center justify-center">
                     {item.badge > 9 ? '9+' : item.badge}
                   </span>
                 ) : null}
@@ -1999,6 +2012,66 @@ export function HouseholdWorkspace({
           })}
         </div>
       </nav>
+
+      {isMoreOpen && (
+        <Sheet onClose={() => setIsMoreOpen(false)} title={lang === 'es' ? 'Más secciones' : 'More'} size="sm">
+          <div className="grid grid-cols-2 gap-3">
+            {navItems
+              .filter((n) => n.id === 'restock-ai' || n.id === 'analytics' || n.id === 'household')
+              .map((n) => {
+                const Icon = n.icon;
+                return (
+                  <button
+                    key={n.id}
+                    onClick={() => {
+                      setIsMoreOpen(false);
+                      selectTab(n.id);
+                    }}
+                    className={`card p-4 text-left min-h-[104px] flex flex-col justify-between transition ${
+                      activeTab === n.id ? 'ring-2 ring-avocado-500' : 'hover:bg-[var(--glass-bg-hover)]'
+                    }`}
+                  >
+                    <span className="flex items-center justify-between">
+                      <Icon className="w-6 h-6 text-avocado-600 dark:text-avocado-400" />
+                      {n.badge ? (
+                        <span className="min-w-5 h-5 px-1.5 rounded-full bg-coral-500 text-white text-[11px] font-bold flex items-center justify-center">
+                          {n.badge}
+                        </span>
+                      ) : null}
+                    </span>
+                    <span className="text-[15px] font-semibold leading-tight">{n.label}</span>
+                  </button>
+                );
+              })}
+            {[
+              { key: 'settings', label: lang === 'es' ? 'Ajustes' : 'Settings', icon: Settings, run: () => openSettings(), active: activeTab === 'settings' },
+              { key: 'market', label: lang === 'es' ? 'Modo súper' : 'Store mode', icon: ShoppingCart, run: () => setIsSupermarketMode(true), active: false },
+              { key: 'assistant', label: lang === 'es' ? 'Asistente' : 'Assistant', icon: Bot, run: () => setIsAssistantOpen(true), active: false },
+            ].map((a) => {
+              const Icon = a.icon;
+              return (
+                <button
+                  key={a.key}
+                  onClick={() => {
+                    setIsMoreOpen(false);
+                    a.run();
+                  }}
+                  className={`card p-4 text-left min-h-[104px] flex flex-col justify-between transition ${
+                    a.active ? 'ring-2 ring-avocado-500' : 'hover:bg-[var(--glass-bg-hover)]'
+                  }`}
+                >
+                  <Icon className="w-6 h-6 text-avocado-600 dark:text-avocado-400" />
+                  <span className="text-[15px] font-semibold leading-tight">{a.label}</span>
+                </button>
+              );
+            })}
+          </div>
+          <div className="mt-4 flex items-center justify-between rounded-xl bg-[var(--glass-bg-subtle)] px-3 py-2.5">
+            <span className="text-sm text-[var(--text-secondary)]">{lang === 'es' ? 'Estado' : 'Status'}</span>
+            {syncBadge}
+          </div>
+        </Sheet>
+      )}
 
       {/* Toast */}
       {toast && (
@@ -2147,46 +2220,6 @@ export function HouseholdWorkspace({
         />
       )}
 
-      <AccountSheet
-        isOpen={isAccountOpen}
-        onClose={() => setIsAccountOpen(false)}
-        mode={isCloud ? 'cloud' : 'demo'}
-        member={currentMember}
-        householdName={household.name}
-        householdId={householdId}
-        memberships={memberships}
-        currency={cur}
-        language={lang}
-        theme={theme}
-        syncBadge={syncBadge}
-        onChangeCurrency={(c) => updatePrefs({ currency: c })}
-        onChangeLanguage={(l) => updatePrefs({ language: l })}
-        onToggleTheme={onToggleTheme}
-        onSwitchHousehold={onSwitchHousehold}
-        onSwitchDemoMember={
-          isCloud
-            ? undefined
-            : () => {
-                const idx = household.members.findIndex((m) => m.id === demoMemberId);
-                const next = household.members[(idx + 1) % household.members.length];
-                if (next) setCurrentMemberId(next.id);
-              }
-        }
-        onResetDemoData={handleResetDemoData}
-        onSignOut={onSignOut}
-        onExitDemo={onExitDemo}
-        sb={sb}
-        userId={userId}
-        onToast={showToast}
-        onOpenEmailInvoices={
-          isCloud && INBOUND_DOMAIN
-            ? () => {
-                setIsAccountOpen(false);
-                setIsEmailInvoicesOpen(true);
-              }
-            : undefined
-        }
-      />
     </div>
   );
 }

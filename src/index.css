@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+/* dark: utilities follow the app theme (html.dark), not only the OS setting */
+@custom-variant dark (&:where(.dark, .dark *));
+
 /* Canastica brand palette: avocado green taken from the logo (400 is the logo's main green) */
 @theme {
   --color-avocado-50: #f3f8ea;
@@ -37,8 +40,8 @@ html.light {
   --glass-bg-elevated: rgba(255, 255, 255, 0.96);
   --glass-border: #e3e9da;
   --glass-border-strong: #cdd7c1;
-  --glass-specular: inset 0 1px 0 0 rgba(255, 255, 255, 0.9);
-  --glass-shadow: 0 1px 3px 0 rgba(23, 32, 20, 0.03), 0 1px 2px -1px rgba(23, 32, 20, 0.02);
+  --glass-specular: none;
+  --glass-shadow: 0 1px 2px 0 rgba(23, 32, 20, 0.04);
   --glass-shadow-elevated: 0 18px 38px -10px rgba(23, 32, 20, 0.12),
     0 4px 10px -2px rgba(23, 32, 20, 0.05);
   --input-glass-bg: #ffffff;
@@ -46,24 +49,24 @@ html.light {
 }
 
 html.dark {
-  /* Dark Mode: deep green-black, like an avocado skin */
-  --bg-primary: #0b0f0a;
-  --bg-canvas: #0b0f0a;
-  --bg-sidebar: #10150e;
-  --text-primary: #f4f7f0;
-  --text-secondary: #ced8c5;
-  --text-muted: #99a68f;
+  /* Dark Mode: deep avocado-skin green */
+  --bg-primary: #141d0e;
+  --bg-canvas: #0f1709;
+  --bg-sidebar: #121b0b;
+  --text-primary: #f1f6ea;
+  --text-secondary: #cfdac3;
+  --text-muted: #9aa98e;
 
-  --glass-bg: #141a12;
-  --glass-bg-subtle: #192117;
-  --glass-bg-hover: #222c1e;
-  --glass-bg-elevated: rgba(20, 26, 18, 0.96);
+  --glass-bg: #16210f;
+  --glass-bg-subtle: #1b2714;
+  --glass-bg-hover: #223019;
+  --glass-bg-elevated: rgba(22, 33, 15, 0.97);
   --glass-border: rgba(255, 255, 255, 0.08);
   --glass-border-strong: rgba(255, 255, 255, 0.15);
-  --glass-specular: inset 0 1px 0 0 rgba(255, 255, 255, 0.06);
-  --glass-shadow: 0 2px 8px -2px rgba(0, 0, 0, 0.35);
+  --glass-specular: none;
+  --glass-shadow: none;
   --glass-shadow-elevated: 0 22px 48px -12px rgba(0, 0, 0, 0.65);
-  --input-glass-bg: #10160e;
+  --input-glass-bg: #111a0b;
   --input-border: rgba(255, 255, 255, 0.14);
 }
 
@@ -112,6 +115,14 @@ body {
     border-color 0.18s ease;
 }
 
+/* Propuesta "Fresca": white card on the tinted canvas */
+.card {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: 1rem;
+  box-shadow: var(--glass-shadow);
+}
+
 .liquid-glass-subtle {
   background: var(--glass-bg-subtle);
   border: 1px solid var(--glass-border);
@@ -144,17 +155,19 @@ body {
   background: var(--input-glass-bg);
   border: 1px solid var(--input-border);
   color: var(--text-primary);
+  min-height: 2.75rem;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .liquid-input:focus {
   outline: none;
-  border-color: #4f7f27;
-  box-shadow: 0 0 0 2px rgba(79, 127, 39, 0.18);
+  border-color: #74a03a;
+  box-shadow: 0 0 0 4px rgba(116, 160, 58, 0.15);
 }
 
 /* Minimalist Modern Primary CTA Button */
 .liquid-lens-btn {
+  min-height: 2.25rem;
   background: #4f7f27;
   color: #ffffff;
   border: 1px solid rgba(255, 255, 255, 0.18);
@@ -185,6 +198,33 @@ body {
   100% {
     opacity: 1;
     transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.animate-fade-in {
+  animation: fadeIn 0.18s ease-out both;
+}
+
+/* Bottom sheet slides up on phones, dialog pops in on larger screens */
+@keyframes sheetUp {
+  from { transform: translateY(24px); opacity: 0.6; }
+  to { transform: translateY(0); opacity: 1; }
+}
+@keyframes dialogIn {
+  from { transform: scale(0.97) translateY(6px); opacity: 0; }
+  to { transform: scale(1) translateY(0); opacity: 1; }
+}
+.animate-sheet-in {
+  animation: sheetUp 0.26s var(--smooth-easing) both;
+}
+@media (min-width: 640px) {
+  .animate-sheet-in {
+    animation-name: dialogIn;
+    animation-duration: 0.2s;
   }
 }
 

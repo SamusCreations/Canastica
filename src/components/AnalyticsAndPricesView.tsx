@@ -669,7 +669,7 @@ export const AnalyticsAndPricesView: React.FC<AnalyticsAndPricesViewProps> = ({
 
             <form onSubmit={handleAddStoreSubmit} className="space-y-2.5">
               <div>
-                <label className="text-[11px] font-semibold text-[var(--text-secondary)] block mb-1">
+                <label className="text-sm font-semibold text-[var(--text-secondary)] block mb-1.5">
                   Nombre del Comercio
                 </label>
                 <input
@@ -677,18 +677,18 @@ export const AnalyticsAndPricesView: React.FC<AnalyticsAndPricesViewProps> = ({
                   value={newStoreName}
                   onChange={(e) => setNewStoreName(e.target.value)}
                   placeholder="Ej. Abastecedor La Amistad"
-                  className="liquid-input w-full px-3 py-2 rounded-lg text-xs"
+                  className="liquid-input w-full px-3.5 rounded-xl text-[15px]"
                 />
               </div>
 
               <div>
-                <label className="text-[11px] font-semibold text-[var(--text-secondary)] block mb-1">
+                <label className="text-sm font-semibold text-[var(--text-secondary)] block mb-1.5">
                   Tipo de Establecimiento
                 </label>
                 <select
                   value={newStoreType}
                   onChange={(e) => setNewStoreType(e.target.value as SupermarketType)}
-                  className="liquid-input w-full px-3 py-2 rounded-lg text-xs"
+                  className="liquid-input w-full px-3.5 rounded-xl text-[15px]"
                 >
                   <option value="Abastecedor / Pulpería">Abastecedor / Pulpería</option>
                   <option value="Feria del Agricultor">Feria del Agricultor</option>
@@ -700,7 +700,7 @@ export const AnalyticsAndPricesView: React.FC<AnalyticsAndPricesViewProps> = ({
               </div>
 
               <div>
-                <label className="text-[11px] font-semibold text-[var(--text-secondary)] block mb-1">
+                <label className="text-sm font-semibold text-[var(--text-secondary)] block mb-1.5">
                   Ubicación / Barrio (Opcional)
                 </label>
                 <input
@@ -708,14 +708,14 @@ export const AnalyticsAndPricesView: React.FC<AnalyticsAndPricesViewProps> = ({
                   value={newStoreLocation}
                   onChange={(e) => setNewStoreLocation(e.target.value)}
                   placeholder="Ej. San Pedro, Montes de Oca"
-                  className="liquid-input w-full px-3 py-2 rounded-lg text-xs"
+                  className="liquid-input w-full px-3.5 rounded-xl text-[15px]"
                 />
               </div>
 
               <button
                 type="submit"
                 disabled={!newStoreName.trim()}
-                className="w-full liquid-lens-btn py-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 disabled:opacity-40"
+                className="w-full liquid-lens-btn min-h-12 rounded-xl text-sm font-semibold flex items-center justify-center gap-1.5 disabled:opacity-40"
               >
                 <Plus className="w-3.5 h-3.5" /> Guardar Supermercado
               </button>

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { Copy, Link2, Loader2, Power, Share2, X } from 'lucide-react';
+import { Copy, Link2, Loader2, Power, Share2 } from 'lucide-react';
+import { Sheet } from './ui/Sheet';
 import {
   createSharedLink,
   isLinkUsable,
@@ -117,31 +118,8 @@ export const ShareListSheet: React.FC<ShareListSheetProps> = ({ sb, userId, hous
   const activeLinks = (links ?? []).filter(isLinkUsable);
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center">
-      <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={onClose} />
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label="Compartir lista"
-        className="relative w-full sm:max-w-md max-h-[90dvh] overflow-y-auto liquid-glass-elevated rounded-t-3xl sm:rounded-2xl p-4 pb-[calc(env(safe-area-inset-bottom)+16px)] space-y-4 animate-spring-in"
-      >
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl liquid-lens-btn flex items-center justify-center text-white shrink-0">
-            <Share2 className="w-4 h-4" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-base font-bold">Compartir lista</p>
-            <p className="text-xs text-[var(--text-muted)]">Por WhatsApp, Telegram o donde quieras. No necesitan cuenta.</p>
-          </div>
-          <button
-            onClick={onClose}
-            className="w-10 h-10 rounded-xl liquid-glass-subtle liquid-glass-interactive flex items-center justify-center shrink-0"
-            aria-label="Cerrar"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-
+    <Sheet onClose={onClose} title="Compartir lista" icon={<Share2 className="w-5 h-5" />} size="sm" zIndex="z-[70]" subtitle="Por WhatsApp, Telegram o donde quieras. No necesitan cuenta.">
+      <div className="space-y-4">
         <section className="liquid-glass-subtle rounded-2xl p-3 space-y-2">
           <p className="text-sm font-bold">Enlace nuevo</p>
           <p className="text-xs text-[var(--text-muted)]">
@@ -207,6 +185,6 @@ export const ShareListSheet: React.FC<ShareListSheetProps> = ({ sb, userId, hous
           ))}
         </section>
       </div>
-    </div>
+    </Sheet>
   );
 };

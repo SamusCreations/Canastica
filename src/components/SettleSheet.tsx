@@ -1,7 +1,9 @@
 import React, { useRef, useState } from 'react';
-import { CheckCircle2, Paperclip, X } from 'lucide-react';
+import { ArrowRight, CheckCircle2, HandCoins, Paperclip, X } from 'lucide-react';
 import type { CurrencyCode } from '../types/grocery';
 import { formatCurrency } from '../utils/formatters';
+import { Sheet } from './ui/Sheet';
+import { Button, Field, FormActions, TextInput } from './ui/Form';
 
 const MAX_EVIDENCE_BYTES = 8 * 1024 * 1024;
 
@@ -25,6 +27,8 @@ export const SettleSheet: React.FC<SettleSheetProps> = ({ fromName, toName, amou
   const [note, setNote] = useState('');
   const [evidence, setEvidence] = useState<File | null>(null);
   const [error, setError] = useState('');
+  const from = fromName.split(' ')[0];
+  const to = toName.split(' ')[0];
 
   const pick = (file: File | undefined) => {
     if (!file) return;
@@ -41,81 +45,84 @@ export const SettleSheet: React.FC<SettleSheetProps> = ({ fromName, toName, amou
   };
 
   return (
-    <div className="fixed inset-0 z-[80] flex items-end sm:items-center justify-center sm:p-4">
-      <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onCancel} />
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label="Liquidar"
-        className="relative liquid-glass-elevated w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl p-4 sm:p-5 space-y-4 pb-[calc(env(safe-area-inset-bottom)+16px)] animate-spring-in"
-      >
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <h3 className="text-base font-bold">Liquidar {formatCurrency(amount, currency)}</h3>
-            <p className="text-xs text-[var(--text-muted)]">
-              {fromName.split(' ')[0]} le paga a {toName.split(' ')[0]}. Le enviaremos un correo a{' '}
-              {toName.split(' ')[0]} avisándole.
-            </p>
-          </div>
-          <button
-            onClick={onCancel}
-            className="w-9 h-9 rounded-xl liquid-glass-subtle liquid-glass-interactive flex items-center justify-center shrink-0"
-            aria-label="Cerrar"
-          >
-            <X className="w-4 h-4" />
-          </button>
+    <Sheet
+      onClose={onCancel}
+      title="Liquidar saldo"
+      icon={<HandCoins className="w-5 h-5" />}
+      size="sm"
+      zIndex="z-[80]"
+      footer={
+        <FormActions>
+          <Button variant="secondary" size="lg" onClick={onCancel}>
+            Cancelar
+          </Button>
+          <Button size="lg" onClick={() => onConfirm({ note: note.trim(), evidence })}>
+            <CheckCircle2 className="w-5 h-5" /> Registrar pago
+          </Button>
+        </FormActions>
+      }
+    >
+      <div className="space-y-5">
+        <div className="rounded-2xl bg-[var(--glass-bg-subtle)] p-4 text-center">
+          <p className="text-sm text-[var(--text-secondary)] flex items-center justify-center gap-2 font-medium">
+            {from} <ArrowRight className="w-4 h-4" /> {to}
+          </p>
+          <p className="text-4xl font-bold tracking-tight mt-1 tabular-nums">{formatCurrency(amount, currency)}</p>
+          <p className="text-xs text-[var(--text-muted)] mt-1">Le avisaremos a {to} por correo.</p>
         </div>
 
-        <label className="block space-y-1">
-          <span className="text-xs font-semibold text-[var(--text-secondary)]">Nota (opcional)</span>
-          <input
-            value={note}
-            maxLength={200}
-            onChange={(e) => setNote(e.target.value)}
-            placeholder="Ej.: SINPE de octubre"
-            className="liquid-input w-full px-3 py-2 rounded-xl text-sm"
-          />
-        </label>
-
-        <div>
-          <input
-            ref={fileRef}
-            type="file"
-            accept="image/*,application/pdf"
-            className="hidden"
-            onChange={(e) => {
-              pick(e.target.files?.[0]);
-              e.target.value = '';
-            }}
-          />
-          {evidence ? (
-            <div className="liquid-glass-subtle rounded-xl px-3 py-2 flex items-center justify-between gap-2 text-xs">
-              <span className="truncate flex items-center gap-1.5">
-                <Paperclip className="w-3.5 h-3.5 shrink-0" /> {evidence.name}
-              </span>
-              <button onClick={() => setEvidence(null)} className="text-rose-600 dark:text-rose-400 font-bold shrink-0">
-                Quitar
-              </button>
-            </div>
-          ) : (
-            <button
-              type="button"
-              onClick={() => fileRef.current?.click()}
-              className="w-full min-h-[44px] rounded-xl border-2 border-dashed border-[var(--glass-border-strong)] text-sm font-semibold text-[var(--text-secondary)] flex items-center justify-center gap-2 hover:border-avocado-500/60"
-            >
-              <Paperclip className="w-4 h-4" /> Adjuntar comprobante (opcional)
-            </button>
+        <Field label="Nota (opcional)">
+          {(id) => (
+            <TextInput
+              id={id}
+              value={note}
+              maxLength={200}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="Ej.: SINPE de octubre"
+              enterKeyHint="done"
+            />
           )}
-          {error && <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{error}</p>}
-        </div>
+        </Field>
 
-        <button
-          onClick={() => onConfirm({ note: note.trim(), evidence })}
-          className="w-full liquid-lens-btn min-h-[48px] rounded-xl text-base font-bold flex items-center justify-center gap-2"
-        >
-          <CheckCircle2 className="w-4 h-4" /> Confirmar liquidación
-        </button>
+        <Field label="Comprobante (opcional)" error={error || undefined} hint="Foto o PDF, máximo 8 MB.">
+          {() => (
+            <>
+              <input
+                ref={fileRef}
+                type="file"
+                accept="image/*,application/pdf"
+                className="hidden"
+                onChange={(e) => {
+                  pick(e.target.files?.[0]);
+                  e.target.value = '';
+                }}
+              />
+              {evidence ? (
+                <div className="min-h-12 rounded-xl border border-[var(--input-border)] px-3.5 flex items-center justify-between gap-2 text-sm">
+                  <span className="truncate flex items-center gap-2">
+                    <Paperclip className="w-4 h-4 shrink-0 text-avocado-600" /> {evidence.name}
+                  </span>
+                  <button
+                    onClick={() => setEvidence(null)}
+                    className="w-9 h-9 -mr-2 rounded-full flex items-center justify-center text-[var(--text-muted)] hover:text-coral-500"
+                    aria-label="Quitar comprobante"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => fileRef.current?.click()}
+                  className="w-full min-h-12 rounded-xl border-2 border-dashed border-[var(--glass-border-strong)] text-sm font-semibold text-[var(--text-secondary)] flex items-center justify-center gap-2 hover:border-avocado-400"
+                >
+                  <Paperclip className="w-4 h-4" /> Adjuntar comprobante
+                </button>
+              )}
+            </>
+          )}
+        </Field>
       </div>
-    </div>
+    </Sheet>
   );
 };

@@ -2,18 +2,20 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Camera,
+  Check,
   CheckCircle2,
+  ChevronDown,
   Clock,
   FileText,
   FileWarning,
+  PencilLine,
   Plus,
   RefreshCw,
+  ScanLine,
   Sparkles,
   Store,
-  Tag,
   Trash2,
   Upload,
-  X,
 } from 'lucide-react';
 import {
   normalizeReceiptProduct,
@@ -45,7 +47,8 @@ import {
 import { formatCurrency, translateCategory } from '../utils/formatters';
 import { getTodayIso } from '../utils/dates';
 import { applyReceiptMemory, buildReceiptMemory } from '../lib/receiptMemory';
-import { AssigneeSelect } from './AssigneeSelect';
+import { Sheet } from './ui/Sheet';
+import { Button, Field, FormSection, MoneyInput, Segmented, SelectInput, Stepper, Switch, TextInput } from './ui/Form';
 import { isElectronicInvoiceFile, parseElectronicInvoiceXml } from '../lib/electronicInvoice';
 import { receiptFileKind } from '../utils/receiptFile';
 
@@ -190,6 +193,16 @@ export const ReceiptScannerModal: React.FC<ReceiptScannerModalProps> = ({
   const [newStoreName, setNewStoreName] = useState('');
   const [newStoreType, setNewStoreType] = useState<SupermarketType>('Abastecedor / Pulpería');
   const [newStoreLocation, setNewStoreLocation] = useState('');
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
+  const [expandNewest, setExpandNewest] = useState(false);
+
+  // "Agregar producto" opens the new row ready to type
+  useEffect(() => {
+    if (!expandNewest || draftItems.length === 0) return;
+    const last = draftItems[draftItems.length - 1];
+    setExpandedIds((prev) => new Set(prev).add(last.id));
+    setExpandNewest(false);
+  }, [expandNewest, draftItems]);
 
   // A receipt the queue already read opens straight on its review
   useEffect(() => {
@@ -523,846 +536,687 @@ export const ReceiptScannerModal: React.FC<ReceiptScannerModalProps> = ({
     onClose();
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4 bg-slate-900/50 backdrop-blur-md animate-spring-in overflow-hidden">
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label={isEditing ? 'Editar factura' : 'Escáner de facturas'}
-        className="liquid-glass-elevated w-full max-w-6xl rounded-t-3xl sm:rounded-2xl overflow-hidden h-[calc(100dvh-env(safe-area-inset-top)-8px)] sm:h-auto sm:max-h-[90vh] flex flex-col"
-      >
-        {/* Top Modal Header */}
-        <div className="flex items-center justify-between gap-3 px-4 sm:px-5 py-3 border-b border-[var(--glass-border)] shrink-0">
-          <div className="flex items-center gap-3 min-w-0">
-            <div className="w-10 h-10 rounded-xl liquid-lens-btn flex items-center justify-center text-white shrink-0">
-              <Camera className="w-5 h-5" />
-            </div>
-            <div className="min-w-0">
-              <h2 className="text-base font-bold tracking-tight flex items-center gap-2 truncate">
-                {isEditing
-                  ? language === 'es' ? 'Editar factura' : 'Edit receipt'
-                  : language === 'es' ? 'Escanear factura' : 'Scan receipt'}
-              </h2>
-              <p className="hidden sm:block text-xs text-[var(--text-muted)]">
-                {isEditing
-                  ? 'Corrige comercio, fecha, productos o montos y guarda los cambios'
-                  : `Lectura automática de productos y total en ${currency}`}
-              </p>
-            </div>
-          </div>
-          <button
-            onClick={() => {
-              setStep('upload');
-              onClose();
-            }}
-            className="w-10 h-10 shrink-0 flex items-center justify-center rounded-xl liquid-glass liquid-glass-interactive"
-            aria-label="Cerrar escáner"
-          >
-            <X className="w-5 h-5" />
-          </button>
+  const closeScanner = () => {
+    setStep('upload');
+    onClose();
+  };
+
+  const toggleExpanded = (id: string) =>
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const addItemAndEdit = () => {
+    handleAddManualDraftItem();
+    setExpandNewest(true);
+  };
+
+  const setAssignee = (id: string, value: string) =>
+    setDraftItems((prev) =>
+      prev.map((d) =>
+        d.id !== id
+          ? d
+          : value === 'shared'
+            ? { ...d, isShared: true, assignedTo: undefined }
+            : { ...d, isShared: false, assignedTo: value }
+      )
+    );
+
+  const symbol = currency === 'USD' ? '$' : '₡';
+  const sheetTitle = isEditing
+    ? language === 'es'
+      ? 'Editar compra'
+      : 'Edit purchase'
+    : step === 'confirm'
+      ? language === 'es'
+        ? 'Revisar y guardar'
+        : 'Review and save'
+      : language === 'es'
+        ? 'Registrar compra'
+        : 'Add purchase';
+
+  const footer =
+    step === 'confirm' ? (
+      <div className="flex flex-col-reverse sm:flex-row sm:items-center gap-2">
+        {!isEditing && (
+          <Button variant="ghost" onClick={() => setStep('upload')}>
+            <RefreshCw className="w-4 h-4" /> Escanear otra
+          </Button>
+        )}
+        <div className="sm:ml-auto flex items-center gap-3">
+          <span className="hidden sm:block text-sm text-[var(--text-muted)]">
+            {draftItems.length} {draftItems.length === 1 ? 'producto' : 'productos'}
+          </span>
+          <Button size="lg" block className="sm:w-auto" onClick={handleConfirmAndSave} disabled={draftItems.length === 0}>
+            <CheckCircle2 className="w-5 h-5" />
+            {isEditing ? 'Guardar cambios' : 'Guardar compra'} · {formatCurrency(receiptGrandTotal, currency)}
+          </Button>
         </div>
+      </div>
+    ) : undefined;
 
-        {/* Modal Body */}
-        <div
-          className={`px-4 pt-4 sm:px-6 sm:pt-6 overflow-y-auto overscroll-contain flex-1 space-y-6 ${
-            step === 'confirm' ? 'pb-[env(safe-area-inset-bottom)]' : 'pb-[calc(env(safe-area-inset-bottom)+16px)]'
-          }`}
+  const receiptPreview = (
+    <div className="rounded-2xl bg-[var(--glass-bg-subtle)] border border-[var(--glass-border)] p-2 flex justify-center">
+      {receiptImageUrl && receiptFileKind(receiptImageUrl) !== 'image' ? (
+        <a
+          href={receiptImageUrl}
+          target="_blank"
+          rel="noreferrer"
+          download={receiptFileKind(receiptImageUrl) === 'xml' ? 'factura.xml' : 'factura.pdf'}
+          className="py-10 flex flex-col items-center gap-2 text-sm font-semibold text-avocado-700 dark:text-avocado-300"
         >
-          {step === 'upload' && (
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-              {/* Drag and Drop / Mobile Camera Zone */}
-              <div className="lg:col-span-12 flex flex-col justify-between">
-                <div
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    setIsDragging(true);
-                  }}
-                  onDragLeave={() => setIsDragging(false)}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    setIsDragging(false);
-                    const file = e.dataTransfer.files?.[0];
-                    if (file) handleFileUpload(file);
-                  }}
-                  className={`liquid-glass-subtle rounded-2xl p-8 text-center border-2 border-dashed transition-all flex flex-col items-center justify-center min-h-[300px] ${
-                    isDragging
-                      ? 'border-avocado-500 bg-avocado-500/10'
-                      : 'border-[var(--glass-border-strong)] hover:border-avocado-500/60'
-                  }`}
-                >
-                  <div className="w-14 h-14 rounded-2xl liquid-lens-btn flex items-center justify-center text-white mb-4">
-                    <Upload className="w-7 h-7" />
-                  </div>
-                  <h3 className="text-base font-bold mb-1">
-                    <span className="sm:hidden">Sube o toma la foto de tu factura</span>
-                    <span className="hidden sm:inline">Arrastra y suelta la foto de tu factura, o tómala con la cámara</span>
-                  </h3>
-                  <p className="hidden sm:block text-xs text-[var(--text-muted)] max-w-md mb-6 leading-relaxed">
-                    Lectura automática de tiquetes de cualquier supermercado o pulpería: traduce códigos abreviados como{' '}
-                    <code className="px-1.5 py-0.5 rounded bg-avocado-500/10 font-mono text-avocado-600 dark:text-avocado-400">
-                      LCH DOS PIN 1L
-                    </code>{' '}
-                    en{' '}
-                    <span className="font-semibold text-emerald-600 dark:text-emerald-400">
-                      Leche Dos Pinos 1L
+          <FileText className="w-10 h-10" />
+          {receiptFileKind(receiptImageUrl) === 'xml' ? 'Factura electrónica (XML)' : 'Factura en PDF'}
+        </a>
+      ) : receiptImageUrl ? (
+        <a href={receiptImageUrl} target="_blank" rel="noreferrer" title="Abrir la foto completa">
+          <img src={receiptImageUrl} alt="Factura escaneada" className="max-w-full max-h-[60vh] object-contain rounded-xl" />
+        </a>
+      ) : (
+        <p className="py-8 text-sm text-[var(--text-muted)]">Sin imagen de la factura</p>
+      )}
+    </div>
+  );
+
+  return (
+    <Sheet onClose={closeScanner} title={sheetTitle} icon={<ScanLine className="w-5 h-5" />} size="xl" tall={step === 'confirm'} footer={footer}>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*,application/pdf,.pdf,.xml,text/xml,application/xml"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) handleFileUpload(f);
+          e.target.value = '';
+        }}
+      />
+      <input
+        ref={cameraInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) handleFileUpload(f);
+          e.target.value = '';
+        }}
+      />
+
+      {step === 'upload' && (
+        <div
+          onDragOver={(e) => {
+            e.preventDefault();
+            setIsDragging(true);
+          }}
+          onDragLeave={() => setIsDragging(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setIsDragging(false);
+            const file = e.dataTransfer.files?.[0];
+            if (file) handleFileUpload(file);
+          }}
+          className={`max-w-2xl mx-auto space-y-3 rounded-3xl transition ${isDragging ? 'ring-4 ring-avocado-400/40 bg-avocado-50/50 dark:bg-white/5' : ''}`}
+        >
+          <button
+            onClick={() => cameraInputRef.current?.click()}
+            disabled={!aiAvailable}
+            className="w-full rounded-3xl bg-avocado-600 hover:bg-avocado-700 text-white p-6 sm:p-8 flex flex-col items-center gap-3 text-center transition disabled:opacity-50"
+          >
+            <span className="w-16 h-16 rounded-2xl bg-white/15 flex items-center justify-center">
+              <Camera className="w-8 h-8" />
+            </span>
+            <span className="text-lg font-bold">Tomar foto de la factura</span>
+            <span className="text-sm text-avocado-100 max-w-sm">
+              La IA lee productos, descuentos y el total. Tú solo revisas antes de guardar.
+            </span>
+          </button>
+          <div className="grid sm:grid-cols-2 gap-3">
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="card p-4 flex items-center gap-3 text-left hover:border-avocado-400 transition min-h-[72px]"
+            >
+              <Upload className="w-6 h-6 text-avocado-600 dark:text-avocado-400 shrink-0" />
+              <span>
+                <span className="block font-semibold">Subir archivo</span>
+                <span className="block text-xs text-[var(--text-muted)]">Foto, PDF o XML de factura electrónica</span>
+              </span>
+            </button>
+            <button
+              onClick={handleEnterManually}
+              className="card p-4 flex items-center gap-3 text-left hover:border-avocado-400 transition min-h-[72px]"
+            >
+              <PencilLine className="w-6 h-6 text-avocado-600 dark:text-avocado-400 shrink-0" />
+              <span>
+                <span className="block font-semibold">Registrar a mano</span>
+                <span className="block text-xs text-[var(--text-muted)]">Sin foto, producto por producto</span>
+              </span>
+            </button>
+          </div>
+          <p className="hidden sm:block text-center text-xs text-[var(--text-muted)] pt-1">También puedes arrastrar el archivo aquí.</p>
+          {aiQuota && !aiQuota.exempt && (
+            <p className={`text-center text-xs ${aiAvailable ? 'text-[var(--text-muted)]' : 'text-amber-700 dark:text-amber-300 font-semibold'}`}>
+              {describeAiQuota(aiQuota)}
+              {!aiAvailable && ' Puedes registrar la factura a mano.'}
+            </p>
+          )}
+        </div>
+      )}
+
+      {step === 'scanning' && (
+        <div className="py-10 flex flex-col items-center gap-6 max-w-xl mx-auto">
+          <span className="w-14 h-14 rounded-2xl bg-avocado-600 text-white flex items-center justify-center">
+            <Sparkles className="w-7 h-7 animate-spin" />
+          </span>
+          <div className="text-center space-y-1" aria-live="polite">
+            <h3 className="text-lg font-bold">{scanStageText}</h3>
+            <p className="text-sm text-[var(--text-muted)]">Esto puede tardar unos segundos.</p>
+          </div>
+          <div className="w-full space-y-3">
+            <div className="h-12 rounded-xl liquid-skeleton" />
+            <div className="h-16 rounded-xl liquid-skeleton" />
+            <div className="h-16 rounded-xl liquid-skeleton" />
+          </div>
+        </div>
+      )}
+
+      {step === 'ai_unavailable' && (
+        <div className="max-w-md mx-auto text-center space-y-4 py-4">
+          <span className="w-14 h-14 rounded-2xl bg-amber-500/15 text-amber-600 dark:text-amber-400 flex items-center justify-center mx-auto">
+            <Clock className="w-7 h-7" />
+          </span>
+          <h3 className="text-lg font-bold">
+            {aiUnavailableReason === 'slow' ? 'La IA está tardando mucho' : 'La IA no está disponible ahora'}
+          </h3>
+          <p className="text-sm text-[var(--text-secondary)]">
+            {aiUnavailableReason === 'slow'
+              ? 'Puedes dejar la factura en cola y te avisamos cuando esté lista para revisar, o registrarla a mano.'
+              : blurryAdvice || 'Puedes dejar la factura en cola o registrarla a mano.'}
+          </p>
+          <div className="flex flex-col gap-2">
+            <Button size="lg" onClick={handleQueueReceipt}>
+              <Clock className="w-4 h-4" /> Dejar en cola
+            </Button>
+            <Button size="lg" variant="secondary" onClick={handleManualInsteadOfWaiting}>
+              <PencilLine className="w-4 h-4" /> Registrar a mano
+            </Button>
+          </div>
+          {aiUnavailableReason === 'slow' && (
+            <p className="text-xs text-[var(--text-muted)]">Si la IA responde mientras decides, se abre sola.</p>
+          )}
+        </div>
+      )}
+
+      {step === 'queued' && (
+        <div className="max-w-md mx-auto text-center space-y-4 py-4">
+          <CheckCircle2 className="w-14 h-14 mx-auto text-avocado-600" />
+          <h3 className="text-lg font-bold">Factura en cola</h3>
+          <p className="text-sm text-[var(--text-secondary)]">
+            La leeremos cuando la IA esté disponible y te avisaremos para que la revises antes de guardarla.
+          </p>
+          <div className="flex flex-col gap-2">
+            <Button size="lg" onClick={closeScanner}>
+              Listo
+            </Button>
+            <Button size="lg" variant="secondary" onClick={() => setStep('upload')}>
+              Escanear otra
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {step === 'blurry_error' && (
+        <div className="max-w-md mx-auto space-y-4 py-2">
+          <div className="text-center space-y-2">
+            <span className="w-14 h-14 rounded-2xl bg-coral-500/15 text-coral-500 flex items-center justify-center mx-auto">
+              <FileWarning className="w-7 h-7" />
+            </span>
+            <h3 className="text-lg font-bold">No pudimos leer bien la factura</h3>
+            <p className="text-sm text-[var(--text-secondary)]">{blurryAdvice}</p>
+          </div>
+          <ul className="rounded-2xl bg-[var(--glass-bg-subtle)] p-4 text-sm space-y-1.5 text-[var(--text-secondary)] list-disc list-inside">
+            <li>Alisa el papel sobre una mesa.</li>
+            <li>Usa buena luz, sin sombras sobre los precios.</li>
+            <li>Que se vean los nombres y los montos completos.</li>
+          </ul>
+          <div className="flex flex-col gap-2">
+            <Button size="lg" onClick={() => setStep('upload')}>
+              <RefreshCw className="w-4 h-4" /> Intentar con otra foto
+            </Button>
+            {failedImageUrl && (
+              <Button size="lg" variant="secondary" onClick={handleEnterManually}>
+                <PencilLine className="w-4 h-4" /> Registrar a mano con esta foto
+              </Button>
+            )}
+            {getSupabaseClient() && (
+              <Button
+                variant="ghost"
+                onClick={() => openReportProblem({ prefill: `Error al escanear una factura: "${blurryAdvice}"\n\n` })}
+              >
+                <FileWarning className="w-4 h-4" /> Reportar este problema
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {step === 'confirm' && (
+        <div className="lg:grid lg:grid-cols-[minmax(0,340px)_minmax(0,1fr)] lg:gap-8 lg:items-start">
+          {/* Receipt photo: sticky column on desktop, collapsible on phones */}
+          <aside className="hidden lg:block lg:sticky lg:top-0 space-y-3">{receiptPreview}</aside>
+
+          <div className="space-y-6 min-w-0">
+            {/* Sum check */}
+            {hasMathDiscrepancy ? (
+              <div className="rounded-2xl border border-amber-500/40 bg-amber-500/10 p-4 space-y-3">
+                <p className="text-sm flex gap-2.5">
+                  <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0" />
+                  <span>
+                    <strong className="block">
+                      La suma no cuadra por {formatCurrency(Math.abs(totalDifference), currency)}
+                    </strong>
+                    <span className="text-[var(--text-secondary)]">
+                      Productos {formatCurrency(computedGrandTotal, currency)} vs. total de la factura{' '}
+                      {formatCurrency(receiptGrandTotal, currency)}. Revisa los productos o ajusta el total.
                     </span>
-                    .
+                  </span>
+                </p>
+                <Button variant="secondary" size="sm" onClick={() => setReceiptGrandTotal(computedGrandTotal)}>
+                  Usar {formatCurrency(computedGrandTotal, currency)} como total
+                </Button>
+              </div>
+            ) : draftItems.length > 0 ? (
+              <p className="rounded-2xl bg-avocado-50 dark:bg-avocado-500/10 px-4 py-3 text-sm flex items-center gap-2.5 text-avocado-800 dark:text-avocado-200">
+                <CheckCircle2 className="w-5 h-5 shrink-0" />
+                La suma de los productos coincide con el total
+                {itemPromos > 0 && <> (incluye {formatCurrency(itemPromos, currency)} en promociones)</>}.
+              </p>
+            ) : null}
+
+            {(scanWarnings.length > 0 || reviewCount > 0 || wasRepaired) && (
+              <div className="space-y-1.5 text-sm">
+                {wasRepaired && (
+                  <p className="flex items-start gap-2 text-[var(--text-secondary)]">
+                    <RefreshCw className="w-4 h-4 shrink-0 mt-0.5 text-avocado-600" />
+                    La primera lectura no cuadraba; se hizo una segunda lectura automática.
                   </p>
-
-                  <div className="flex flex-wrap items-center justify-center gap-3">
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      accept="image/*,application/pdf,.pdf,.xml,text/xml,application/xml"
-                      className="hidden"
-                      onChange={(e) => {
-                        const f = e.target.files?.[0];
-                        if (f) handleFileUpload(f);
-                      }}
-                    />
-                    <input
-                      ref={cameraInputRef}
-                      type="file"
-                      accept="image/*"
-                      capture="environment"
-                      className="hidden"
-                      onChange={(e) => {
-                        const f = e.target.files?.[0];
-                        if (f) handleFileUpload(f);
-                      }}
-                    />
-                    <button
-                      onClick={() => cameraInputRef.current?.click()}
-                      disabled={!aiAvailable}
-                      className="liquid-lens-btn px-5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 disabled:opacity-50"
-                    >
-                      <Camera className="w-4 h-4" />
-                      Tomar Foto con Cámara
-                    </button>
-                    <button
-                      onClick={() => fileInputRef.current?.click()}
-                      className="liquid-glass liquid-glass-interactive px-5 py-2.5 rounded-xl text-xs font-semibold flex items-center gap-2"
-                    >
-                      <Upload className="w-4 h-4 text-avocado-600 dark:text-avocado-400" />
-                      Subir foto, PDF o XML
-                    </button>
-                    <button
-                      onClick={handleEnterManually}
-                      className="liquid-glass-subtle liquid-glass-interactive px-5 py-2.5 rounded-xl text-xs font-semibold flex items-center gap-2"
-                    >
-                      <Plus className="w-4 h-4" />
-                      Registrar sin Escanear
-                    </button>
-                  </div>
-                  {aiQuota && !aiQuota.exempt && (
-                    <p
-                      className={`mt-4 text-[11px] ${
-                        aiAvailable ? 'text-[var(--text-muted)]' : 'text-amber-700 dark:text-amber-300 font-semibold'
-                      }`}
-                    >
-                      {describeAiQuota(aiQuota)}
-                      {!aiAvailable && ' Puedes registrar la factura a mano.'}
+                )}
+                {scanWarnings
+                  .filter((w) => !w.startsWith('La suma'))
+                  .map((w) => (
+                    <p key={w} className="flex items-start gap-2 text-amber-700 dark:text-amber-300">
+                      <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" /> {w}
                     </p>
+                  ))}
+                {reviewCount > 0 && (
+                  <p className="flex items-start gap-2 text-amber-700 dark:text-amber-300">
+                    <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                    {reviewCount === 1 ? '1 producto para revisar (marcado abajo).' : `${reviewCount} productos para revisar (marcados abajo).`}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {receiptImageUrl && (
+              <details className="lg:hidden group rounded-2xl border border-[var(--glass-border)]">
+                <summary className="list-none cursor-pointer min-h-12 px-4 flex items-center justify-between text-sm font-semibold">
+                  <span className="flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-avocado-600" /> Ver la factura original
+                  </span>
+                  <ChevronDown className="w-4 h-4 text-[var(--text-muted)] transition group-open:rotate-180" />
+                </summary>
+                <div className="px-2 pb-2">{receiptPreview}</div>
+              </details>
+            )}
+
+            {/* Purchase details */}
+            <FormSection title="Datos de la compra">
+              <div className="grid sm:grid-cols-2 gap-4">
+                <Field
+                  label="Comercio"
+                  className="sm:col-span-2"
+                  action={
+                    <button
+                      type="button"
+                      onClick={() => setShowNewStoreForm((s) => !s)}
+                      className="text-sm font-semibold text-avocado-700 dark:text-avocado-300 min-h-8 flex items-center gap-1"
+                    >
+                      {showNewStoreForm ? 'Cancelar' : <><Plus className="w-4 h-4" /> Nuevo</>}
+                    </button>
+                  }
+                >
+                  {(id) => (
+                    <SelectInput id={id} value={supermarket} onChange={(e) => setSupermarket(e.target.value)}>
+                      {supermarkets.map((st) => (
+                        <option key={st.id} value={st.name}>
+                          {st.name}
+                        </option>
+                      ))}
+                      {!supermarkets.some((s) => s.name === supermarket) && <option value={supermarket}>{supermarket}</option>}
+                    </SelectInput>
                   )}
-                </div>
-              </div>
+                </Field>
 
-            </div>
-          )}
-
-          {/* Glass Shimmer Skeleton State while AI processes */}
-          {step === 'scanning' && (
-            <div className="py-10 px-4 flex flex-col items-center justify-center space-y-6">
-              <div className="w-14 h-14 rounded-2xl liquid-lens-btn flex items-center justify-center text-white">
-                <Sparkles className="w-7 h-7 animate-spin" />
-              </div>
-              <div className="text-center space-y-1">
-                <h3 className="text-base font-bold">{scanStageText}</h3>
-                <p className="text-xs text-[var(--text-muted)]">
-                  Esto puede tardar unos segundos.
-                </p>
-              </div>
-              <div className="w-full max-w-3xl grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="h-44 rounded-xl liquid-skeleton" />
-                <div className="md:col-span-2 space-y-3">
-                  <div className="h-10 rounded-xl liquid-skeleton" />
-                  <div className="h-11 rounded-xl liquid-skeleton" />
-                  <div className="h-11 rounded-xl liquid-skeleton" />
-                  <div className="h-11 rounded-xl liquid-skeleton" />
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* AI too slow or unavailable: queue it or type it by hand */}
-          {step === 'ai_unavailable' && (
-            <div className="max-w-xl mx-auto liquid-glass rounded-2xl p-6 border border-amber-500/40 text-center space-y-4">
-              <div className="w-12 h-12 rounded-xl bg-amber-500/15 flex items-center justify-center mx-auto text-amber-600 dark:text-amber-400">
-                <Clock className="w-6 h-6" />
-              </div>
-              <h3 className="text-base font-bold">
-                {aiUnavailableReason === 'slow' ? 'La IA está tardando mucho' : 'La IA no está disponible ahora'}
-              </h3>
-              <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
-                {aiUnavailableReason === 'slow'
-                  ? 'Puedes dejar la factura en cola y te avisamos cuando esté lista para revisar, o registrarla a mano.'
-                  : blurryAdvice || 'Puedes dejar la factura en cola o registrarla a mano.'}
-              </p>
-              <div className="flex flex-col sm:flex-row items-stretch justify-center gap-3 pt-2">
-                <button
-                  onClick={handleQueueReceipt}
-                  className="liquid-lens-btn px-5 py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2"
-                >
-                  <Clock className="w-4 h-4" />
-                  Dejar en cola
-                </button>
-                <button
-                  onClick={handleManualInsteadOfWaiting}
-                  className="liquid-glass-subtle liquid-glass-interactive px-5 py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2"
-                >
-                  <Plus className="w-4 h-4" />
-                  Registrar a mano
-                </button>
-              </div>
-              {aiUnavailableReason === 'slow' && (
-                <p className="text-[11px] text-[var(--text-muted)]">Si la IA responde mientras decides, se abre sola.</p>
-              )}
-            </div>
-          )}
-
-          {step === 'queued' && (
-            <div className="max-w-xl mx-auto liquid-glass rounded-2xl p-6 border border-emerald-500/40 text-center space-y-4">
-              <CheckCircle2 className="w-12 h-12 mx-auto text-emerald-500" />
-              <h3 className="text-base font-bold">Factura en cola</h3>
-              <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
-                La leeremos cuando la IA esté disponible y te avisaremos para que la revises antes de guardarla.
-                Puedes seguir agregando más facturas.
-              </p>
-              <div className="flex flex-col sm:flex-row items-stretch justify-center gap-3">
-                <button
-                  onClick={() => setStep('upload')}
-                  className="liquid-glass-subtle liquid-glass-interactive px-5 py-2.5 rounded-xl text-sm font-bold"
-                >
-                  Escanear otra
-                </button>
-                <button
-                  onClick={() => {
-                    setStep('upload');
-                    onClose();
-                  }}
-                  className="liquid-lens-btn px-5 py-2.5 rounded-xl text-sm font-bold"
-                >
-                  Listo
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Friendly Blurry / Unreadable Receipt Recovery UI */}
-          {step === 'blurry_error' && (
-            <div className="max-w-xl mx-auto liquid-glass rounded-2xl p-6 border border-rose-500/40 text-center space-y-4">
-              <div className="w-12 h-12 rounded-xl bg-rose-500/15 flex items-center justify-center mx-auto text-rose-600 dark:text-rose-400">
-                <FileWarning className="w-6 h-6" />
-              </div>
-              <h3 className="text-base font-bold">No Pudimos Leer Esta Factura con Claridad</h3>
-              <p className="text-xs text-[var(--text-secondary)] leading-relaxed">{blurryAdvice}</p>
-              <div className="liquid-glass-subtle rounded-xl p-4 text-left text-xs space-y-1.5">
-                <p className="font-bold text-avocado-600 dark:text-avocado-400">
-                  Consejos para una Foto Nítida:
-                </p>
-                <ul className="list-disc list-inside text-[var(--text-secondary)] space-y-1">
-                  <li>Alisa las arrugas del papel térmico sobre una mesa plana.</li>
-                  <li>Usa buena luz sin sombras sobre la columna de precios.</li>
-                  <li>Asegúrate de que se vean tanto los nombres a la izquierda como los montos a la derecha.</li>
-                </ul>
-              </div>
-              <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
-                <button
-                  onClick={() => setStep('upload')}
-                  className="liquid-lens-btn px-5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2"
-                >
-                  <RefreshCw className="w-4 h-4" />
-                  Volver a Intentar / Elegir Otra Foto
-                </button>
-                {getSupabaseClient() && (
-                  <button
-                    onClick={() =>
-                      openReportProblem({ prefill: `Error al escanear una factura: "${blurryAdvice}"
-
-` })
-                    }
-                    className="liquid-glass-subtle liquid-glass-interactive px-5 py-2.5 rounded-xl text-xs font-semibold flex items-center gap-2 text-rose-600 dark:text-rose-400"
-                  >
-                    <FileWarning className="w-4 h-4" />
-                    Reportar este Problema
-                  </button>
-                )}
-                {failedImageUrl && (
-                  <button
-                    onClick={handleEnterManually}
-                    className="liquid-glass-subtle liquid-glass-interactive px-5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2"
-                  >
-                    <Plus className="w-4 h-4" />
-                    Registrar a Mano con Esta Foto
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Glass Confirmation Card (Side-by-Side Receipt Image + Editable Items) */}
-          {step === 'confirm' && (
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-              {/* Left Side: Original Receipt Image Preview */}
-              <div className="lg:col-span-4 flex flex-col gap-3">
-                <div className="liquid-glass rounded-xl p-3 flex flex-col items-center">
-                  <div className="w-full flex items-center justify-between text-xs font-semibold px-2 pb-2 text-[var(--text-secondary)]">
-                    <span>Imagen Original de Factura</span>
-                    <span className="text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
-                      <CheckCircle2 className="w-3.5 h-3.5" /> Lista para Guardar
-                    </span>
+                {showNewStoreForm && (
+                  <div className="sm:col-span-2 rounded-2xl bg-[var(--glass-bg-subtle)] border border-[var(--glass-border)] p-4 space-y-3 animate-spring-in">
+                    <p className="text-sm font-bold flex items-center gap-2">
+                      <Store className="w-4 h-4 text-avocado-600" /> Nuevo comercio
+                    </p>
+                    <Field label="Nombre">
+                      {(id) => (
+                        <TextInput
+                          id={id}
+                          value={newStoreName}
+                          onChange={(e) => setNewStoreName(e.target.value)}
+                          placeholder="Ej. Pulpería La Amistad"
+                          autoComplete="off"
+                          enterKeyHint="next"
+                        />
+                      )}
+                    </Field>
+                    <div className="grid sm:grid-cols-2 gap-3">
+                      <Field label="Tipo">
+                        {(id) => (
+                          <SelectInput id={id} value={newStoreType} onChange={(e) => setNewStoreType(e.target.value as SupermarketType)}>
+                            <option value="Abastecedor / Pulpería">Abastecedor / Pulpería</option>
+                            <option value="Feria del Agricultor">Feria del Agricultor</option>
+                            <option value="Carnicería / Especialidad">Carnicería / Especialidad</option>
+                            <option value="Cadena Nacional">Cadena nacional</option>
+                            <option value="Club Mayorista">Club mayorista</option>
+                            <option value="Otro">Otro</option>
+                          </SelectInput>
+                        )}
+                      </Field>
+                      <Field label="Zona (opcional)">
+                        {(id) => (
+                          <TextInput id={id} value={newStoreLocation} onChange={(e) => setNewStoreLocation(e.target.value)} placeholder="Ej. San Pedro" />
+                        )}
+                      </Field>
+                    </div>
+                    <Button variant="soft" onClick={handleCreateCustomStoreInline} disabled={!newStoreName.trim()}>
+                      Agregar y usar este comercio
+                    </Button>
                   </div>
-                  <div className="w-full max-h-64 overflow-hidden lg:max-h-[410px] lg:overflow-y-auto rounded-lg bg-slate-100 dark:bg-slate-900/60 p-2 flex justify-center">
-                    {receiptImageUrl && receiptFileKind(receiptImageUrl) !== 'image' ? (
-                      <a
-                        href={receiptImageUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        download={receiptFileKind(receiptImageUrl) === 'xml' ? 'factura.xml' : 'factura.pdf'}
-                        className="py-10 flex flex-col items-center gap-2 text-xs font-semibold text-avocado-700 dark:text-avocado-300"
-                      >
-                        <FileText className="w-10 h-10" />
-                        {receiptFileKind(receiptImageUrl) === 'xml' ? 'Factura electrónica (XML)' : 'Factura en PDF'}
-                      </a>
-                    ) : receiptImageUrl ? (
-                      <img
-                        src={receiptImageUrl}
-                        alt="Factura escaneada"
-                        className="max-w-full h-auto rounded-lg shadow-sm"
+                )}
+
+                <Field
+                  label="Fecha"
+                  error={dateSource === 'none' ? 'La factura no trae fecha: confírmala.' : undefined}
+                  hint={dateSource === 'clave' ? 'Tomada de la clave de la factura electrónica.' : undefined}
+                >
+                  {(id) => (
+                    <TextInput
+                      id={id}
+                      type="date"
+                      value={purchaseDate}
+                      max={getTodayIso()}
+                      onChange={(e) => {
+                        setPurchaseDate(e.target.value);
+                        setDateSource('printed');
+                      }}
+                      className={dateSource === 'none' ? 'border-amber-500 ring-4 ring-amber-500/15' : ''}
+                    />
+                  )}
+                </Field>
+                <Field label="Pagó">
+                  {(id) =>
+                    members.length <= 3 ? (
+                      <Segmented
+                        aria-label="Quién pagó"
+                        value={paidByMemberId}
+                        onChange={setPaidByMemberId}
+                        options={members.map((m) => ({ value: m.id, label: m.name.split(' ')[0] }))}
                       />
                     ) : (
-                      <p className="py-10 text-xs text-[var(--text-muted)]">Sin imagen de la factura</p>
-                    )}
-                  </div>
-                </div>
-
-                {/* Sum Validation Status Card */}
-                {hasMathDiscrepancy ? (
-                  <div className="liquid-glass rounded-xl p-4 border border-amber-500/50 bg-amber-500/10 space-y-2.5">
-                    <div className="flex items-start gap-2.5">
-                      <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-                      <div>
-                        <h4 className="text-xs font-bold text-amber-700 dark:text-amber-300 uppercase">
-                          Diferencia Detectada en Suma ({totalDifference > 0 ? '+' : ''}
-                          {formatCurrency(totalDifference, currency)})
-                        </h4>
-                        <p className="text-xs text-[var(--text-secondary)] mt-1 leading-relaxed">
-                          La suma calculada ({formatCurrency(itemsSubtotal, currency)} −{' '}
-                          {formatCurrency(discounts, currency)} desc.
-                          {taxesIncluded ? ', IVA incluido' : <> + {formatCurrency(taxes, currency)} IVA</>} ={' '}
-                          <strong>{formatCurrency(computedGrandTotal, currency)}</strong>) no
-                          coincide con el Total General de la factura (
-                          <strong>{formatCurrency(receiptGrandTotal, currency)}</strong>). Revisa
-                          los ítems o ajusta el total.
-                        </p>
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => setReceiptGrandTotal(computedGrandTotal)}
-                      className="w-full py-2 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-800 dark:text-amber-200 text-xs font-bold transition"
-                    >
-                      Ajustar Total General a {formatCurrency(computedGrandTotal, currency)}
-                    </button>
-                  </div>
-                ) : (
-                  <div className="liquid-glass rounded-xl p-3.5 border border-emerald-500/40 bg-emerald-500/10 flex items-center gap-2.5">
-                    <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                    <div className="text-xs">
-                      <p className="font-bold text-emerald-700 dark:text-emerald-300">
-                        Suma de Ítems Validada Exactamente
-                      </p>
-                      <p className="text-[var(--text-secondary)]">
-                        Productos ({formatCurrency(itemsSubtotal, currency)})
-                        {discounts > 0 && <> − Desc. ({formatCurrency(discounts, currency)})</>}
-                        {taxesIncluded ? ' (IVA incluido)' : <> + IVA ({formatCurrency(taxes, currency)})</>} ={' '}
-                        <strong>{formatCurrency(receiptGrandTotal, currency)}</strong>
-                      </p>
-                      {itemPromos > 0 && (
-                        <p className="text-[var(--text-secondary)]">
-                          Ya incluye {formatCurrency(itemPromos, currency)} de promociones aplicadas a cada producto.
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {(scanWarnings.length > 0 || reviewCount > 0 || wasRepaired) && (
-                  <div className="liquid-glass rounded-xl p-3.5 border border-amber-500/30 space-y-1.5 text-xs">
-                    {wasRepaired && (
-                      <p className="flex items-start gap-1.5 text-[var(--text-secondary)]">
-                        <RefreshCw className="w-3.5 h-3.5 shrink-0 mt-0.5 text-avocado-600 dark:text-avocado-400" />
-                        La primera lectura no cuadraba con el total; se hizo una segunda lectura automática.
-                      </p>
-                    )}
-                    {scanWarnings
-                      .filter((w) => !w.startsWith('La suma'))
-                      .map((w) => (
-                        <p key={w} className="flex items-start gap-1.5 text-amber-700 dark:text-amber-300">
-                          <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" /> {w}
-                        </p>
-                      ))}
-                    {reviewCount > 0 && (
-                      <p className="flex items-start gap-1.5 text-amber-700 dark:text-amber-300">
-                        <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                        {reviewCount === 1
-                          ? '1 producto marcado para revisar.'
-                          : `${reviewCount} productos marcados para revisar.`}
-                      </p>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {/* Right Side: Editable Metadata & Line Items */}
-              <div className="lg:col-span-8 flex flex-col gap-4">
-                {/* Store, Date & Buyer Metadata */}
-                <div className="liquid-glass rounded-xl p-4 space-y-3">
-                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-                    <div className="sm:col-span-2">
-                      <div className="flex items-center justify-between mb-1">
-                        <label className="text-[11px] font-semibold uppercase text-[var(--text-muted)]">
-                          Supermercado / Comercio
-                        </label>
-                        <button
-                          type="button"
-                          onClick={() => setShowNewStoreForm((s) => !s)}
-                          className="text-[11px] font-bold text-avocado-600 dark:text-avocado-400 hover:underline flex items-center gap-0.5"
-                        >
-                          <Plus className="w-3 h-3" /> Nuevo Comercio
-                        </button>
-                      </div>
-                      <select
-                        value={supermarket}
-                        onChange={(e) => setSupermarket(e.target.value)}
-                        className="liquid-input w-full px-3 py-2 rounded-lg text-xs font-semibold"
-                      >
-                        {supermarkets.map((st) => (
-                          <option key={st.id} value={st.name}>
-                            {st.name} ({st.type})
-                          </option>
-                        ))}
-                        {!supermarkets.some((s) => s.name === supermarket) && (
-                          <option value={supermarket}>{supermarket}</option>
-                        )}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="text-[11px] font-semibold uppercase text-[var(--text-muted)] block mb-1">
-                        Fecha de Compra
-                      </label>
-                      <input
-                        type="date"
-                        value={purchaseDate}
-                        max={getTodayIso()}
-                        onChange={(e) => {
-                          setPurchaseDate(e.target.value);
-                          setDateSource('printed');
-                        }}
-                        className={`liquid-input w-full px-3 py-2 rounded-lg text-xs font-semibold ${
-                          dateSource === 'none' ? 'ring-2 ring-amber-500/70 bg-amber-500/10' : ''
-                        }`}
-                      />
-                      {dateSource === 'none' && (
-                        <p className="mt-1 text-[11px] font-semibold text-amber-700 dark:text-amber-300">
-                          La factura no trae fecha: confírmala
-                        </p>
-                      )}
-                      {dateSource === 'clave' && (
-                        <p className="mt-1 text-[11px] text-[var(--text-muted)]">
-                          Fecha tomada de la clave electrónica
-                        </p>
-                      )}
-                    </div>
-                    <div>
-                      <label className="text-[11px] font-semibold uppercase text-[var(--text-muted)] block mb-1">
-                        Pagado Por
-                      </label>
-                      <select
-                        value={paidByMemberId}
-                        onChange={(e) => setPaidByMemberId(e.target.value)}
-                        className="liquid-input w-full px-3 py-2 rounded-lg text-xs font-semibold"
-                      >
+                      <SelectInput id={id} value={paidByMemberId} onChange={(e) => setPaidByMemberId(e.target.value)}>
                         {members.map((m) => (
                           <option key={m.id} value={m.id}>
                             {m.name}
                           </option>
                         ))}
-                      </select>
-                    </div>
-                  </div>
+                      </SelectInput>
+                    )
+                  }
+                </Field>
+              </div>
+            </FormSection>
 
-                  {/* Inline Custom Supermarket Creator */}
-                  {showNewStoreForm && (
-                    <div className="liquid-glass-subtle rounded-xl p-3 border border-avocado-500/30 space-y-2 animate-spring-in">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-bold text-avocado-600 dark:text-avocado-400 flex items-center gap-1.5">
-                          <Store className="w-3.5 h-3.5" /> Registrar Nuevo Supermercado o Pulpería Local
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => setShowNewStoreForm(false)}
-                          className="text-xs text-[var(--text-muted)]"
-                        >
-                          Cancelar
-                        </button>
-                      </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                        <input
-                          type="text"
-                          value={newStoreName}
-                          onChange={(e) => setNewStoreName(e.target.value)}
-                          placeholder="Ej. Abastecedor La Amistad"
-                          className="liquid-input px-3 py-1.5 rounded-lg text-xs"
-                        />
-                        <select
-                          value={newStoreType}
-                          onChange={(e) => setNewStoreType(e.target.value as SupermarketType)}
-                          className="liquid-input px-2.5 py-1.5 rounded-lg text-xs"
-                        >
-                          <option value="Abastecedor / Pulpería">Abastecedor / Pulpería</option>
-                          <option value="Feria del Agricultor">Feria del Agricultor</option>
-                          <option value="Carnicería / Especialidad">Carnicería / Especialidad</option>
-                          <option value="Cadena Nacional">Cadena Nacional</option>
-                          <option value="Club Mayorista">Club Mayorista</option>
-                          <option value="Otro">Otro Comercio</option>
-                        </select>
-                        <div className="flex gap-1.5">
-                          <input
-                            type="text"
-                            value={newStoreLocation}
-                            onChange={(e) => setNewStoreLocation(e.target.value)}
-                            placeholder="Zona / Barrio (Opcional)"
-                            className="liquid-input flex-1 px-2.5 py-1.5 rounded-lg text-xs"
-                          />
-                          <button
-                            type="button"
-                            onClick={handleCreateCustomStoreInline}
-                            className="liquid-lens-btn px-3 py-1.5 rounded-lg text-xs font-bold shrink-0"
-                          >
-                            Guardar
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Extracted Items Table */}
-                <div className="liquid-glass rounded-xl p-4 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h4 className="text-sm font-bold">
-                        Productos ({draftItems.length})
-                      </h4>
-                      <p className="hidden sm:block text-[11px] text-[var(--text-muted)]">
-                        Puedes editar nombres, categorías, cantidades o precios antes de guardar.
-                      </p>
-                    </div>
-                    <button
-                      onClick={handleAddManualDraftItem}
-                      className="liquid-glass liquid-glass-interactive px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 text-avocado-600 dark:text-avocado-400"
+            {/* Items */}
+            <FormSection
+              title={`Productos (${draftItems.length})`}
+              description="Toca un producto para corregir nombre, cantidad o precio."
+            >
+              {draftItems.length === 0 && (
+                <p className="rounded-2xl border-2 border-dashed border-[var(--glass-border-strong)] p-5 text-center text-sm text-[var(--text-muted)]">
+                  Aún no hay productos. Agrega el primero.
+                </p>
+              )}
+              <ul className="space-y-2">
+                {draftItems.map((item) => {
+                  const open = expandedIds.has(item.id) || Boolean(item.needsReview);
+                  const assigneeName = item.isShared
+                    ? null
+                    : members.find((m) => m.id === (item.assignedTo ?? paidByMemberId))?.name.split(' ')[0];
+                  return (
+                    <li
+                      key={item.id}
+                      className={`rounded-2xl border bg-[var(--bg-primary)] ${
+                        item.needsReview ? 'border-amber-500/60' : open ? 'border-avocado-300 dark:border-avocado-700' : 'border-[var(--glass-border)]'
+                      }`}
                     >
-                      <Plus className="w-3.5 h-3.5" /> Añadir Ítem Manual
-                    </button>
-                  </div>
-
-                  <div className="space-y-2 lg:max-h-[420px] lg:overflow-y-auto lg:pr-1">
-                    {draftItems.map((item) => (
-                      <div
-                        key={item.id}
-                        className={`liquid-glass-subtle rounded-xl p-3 flex flex-col gap-2 ${
-                          item.needsReview ? 'ring-1 ring-amber-500/60' : ''
-                        }`}
+                      <button
+                        type="button"
+                        onClick={() => toggleExpanded(item.id)}
+                        aria-expanded={open}
+                        className="w-full flex items-center gap-3 px-4 py-3 text-left min-h-14"
                       >
-                        <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
-                          <div className="flex flex-wrap items-center gap-2 min-w-0">
-                            <span className="px-2 py-0.5 rounded bg-slate-500/10 font-mono text-[var(--text-secondary)]">
-                              Tiquete: {item.rawReceiptName}
-                              {item.barcode && (
-                                <span className="opacity-60"> · {item.barcode}</span>
-                              )}
+                        <span className="flex-1 min-w-0">
+                          <span className="block text-[15px] font-semibold truncate">
+                            {item.normalizedName || <span className="text-[var(--text-muted)] font-normal">Producto sin nombre</span>}
+                          </span>
+                          <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-[var(--text-muted)]">
+                            <span>
+                              {item.quantity} {item.unit}
                             </span>
-                            <span className="text-avocado-600 dark:text-avocado-400 font-semibold flex items-center gap-1">
-                              → Producto: <Tag className="w-3 h-3" /> {item.canonicalName}
-                            </span>
-                            {item.pricingMode === 'weight' && (
-                              <span className="px-1.5 py-0.5 rounded-full bg-sky-500/15 text-sky-700 dark:text-sky-300 font-bold text-[10px]">
-                                Por peso
-                              </span>
-                            )}
-                            {item.learnedFromHistory && (
-                              <span
-                                className="px-1.5 py-0.5 rounded-full bg-avocado-500/15 text-avocado-700 dark:text-avocado-300 font-bold text-[10px]"
-                                title="Nombre y presentación tomados de una compra anterior con la misma línea de factura"
-                              >
-                                Reconocido
-                              </span>
-                            )}
+                            {item.discount > 0 && <span className="text-avocado-700 dark:text-avocado-300">promo −{formatCurrency(item.discount, currency)}</span>}
+                            {assigneeName && <span>· de {assigneeName}</span>}
+                            {item.learnedFromHistory && <span>· reconocido</span>}
                             {item.needsReview && (
-                              <span
-                                className="px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-300 font-bold text-[10px] flex items-center gap-1"
-                                title={item.reviewReasons?.join(' ')}
-                              >
+                              <span className="text-amber-700 dark:text-amber-300 font-semibold flex items-center gap-1">
                                 <AlertTriangle className="w-3 h-3" /> Revisar
                               </span>
                             )}
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <AssigneeSelect
-                              members={members}
-                              isShared={item.isShared}
-                              assignedTo={item.assignedTo ?? paidByMemberId}
-                              onChange={(value) =>
-                                setDraftItems((prev) =>
-                                  prev.map((d) =>
-                                    d.id !== item.id
-                                      ? d
-                                      : value === 'shared'
-                                        ? { ...d, isShared: true, assignedTo: undefined }
-                                        : { ...d, isShared: false, assignedTo: value }
-                                  )
-                                )
-                              }
-                            />
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setDraftItems((prev) => prev.filter((i) => i.id !== item.id))
-                              }
-                              className="p-1 rounded-lg hover:bg-rose-500/15 text-rose-500 transition"
-                              title="Eliminar ítem"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </div>
-
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                          <label className="sm:col-span-2 flex flex-col gap-0.5">
-                            <span className="text-[10px] font-semibold text-[var(--text-muted)]">Producto</span>
-                            <input
-                              type="text"
-                              value={item.normalizedName}
-                              onChange={(e) =>
-                                handleUpdateDraftItem(item.id, 'normalizedName', e.target.value)
-                              }
-                              className="liquid-input w-full px-2.5 py-2 rounded-lg text-sm font-semibold"
-                            />
-                          </label>
-                          <label className="sm:col-span-2 flex flex-col gap-0.5">
-                            <span className="text-[10px] font-semibold text-[var(--text-muted)]">Categoría</span>
-                            <select
-                              value={item.category}
-                              onChange={(e) =>
-                                handleUpdateDraftItem(
-                                  item.id,
-                                  'category',
-                                  e.target.value as GroceryCategory
-                                )
-                              }
-                              className="liquid-input w-full px-2.5 py-2 rounded-lg text-sm"
-                            >
-                              {categories.map((cat) => (
-                                <option key={cat} value={cat}>
-                                  {translateCategory(cat, language)}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                          <label className="flex flex-col gap-0.5">
-                            <span className="text-[10px] font-semibold text-[var(--text-muted)]">Cantidad</span>
-                            <input
-                              type="number"
-                              step="any"
-                              inputMode="decimal"
-                              value={item.quantity}
-                              onChange={(e) =>
-                                handleUpdateDraftItem(
-                                  item.id,
-                                  'quantity',
-                                  parseFloat(e.target.value) || 0
-                                )
-                              }
-                              className="liquid-input w-full px-2.5 py-2 rounded-lg text-sm"
-                            />
-                          </label>
-                          <label className="flex flex-col gap-0.5">
-                            <span className="text-[10px] font-semibold text-[var(--text-muted)]">Unidad</span>
-                            <input
-                              type="text"
-                              value={item.unit}
-                              onChange={(e) =>
-                                handleUpdateDraftItem(item.id, 'unit', e.target.value)
-                              }
-                              className="liquid-input w-full px-2.5 py-2 rounded-lg text-sm"
-                            />
-                          </label>
-                          <label className="flex flex-col gap-0.5">
-                            <span className="text-[10px] font-semibold text-[var(--text-muted)]">Precio unitario (₡)</span>
-                            <input
-                              type="number"
-                              step="10"
-                              inputMode="decimal"
-                              value={item.unitPrice}
-                              onChange={(e) =>
-                                handleUpdateDraftItem(
-                                  item.id,
-                                  'unitPrice',
-                                  parseFloat(e.target.value) || 0
-                                )
-                              }
-                              className="liquid-input w-full px-2.5 py-2 rounded-lg text-sm text-right"
-                            />
-                          </label>
-                          <label className="flex flex-col gap-0.5">
-                            <span className="text-[10px] font-semibold text-[var(--text-muted)]">Total pagado (₡)</span>
-                            <input
-                              type="number"
-                              step="10"
-                              inputMode="decimal"
-                              value={item.totalPrice}
-                              onChange={(e) =>
-                                handleUpdateDraftItem(
-                                  item.id,
-                                  'totalPrice',
-                                  parseFloat(e.target.value) || 0
-                                )
-                              }
-                              className="liquid-input w-full px-2.5 py-2 rounded-lg text-sm font-bold text-right text-emerald-600 dark:text-emerald-400"
-                              title="Pagado por la línea, ya con la promoción (₡)"
-                            />
-                          </label>
-                        </div>
-
-                        {(item.discount > 0 || (item.reviewReasons?.length ?? 0) > 0) && (
-                          <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
-                            <span className="text-[var(--text-muted)]">
-                              {item.reviewReasons?.join(' ')}
-                            </span>
-                            {item.discount > 0 && (
-                              <label className="flex items-center gap-1.5 text-emerald-700 dark:text-emerald-300 font-semibold">
-                                {item.discountLabel || 'Promoción'}: −₡
-                                <input
-                                  type="number"
-                                  step="10"
-                                  value={item.discount}
-                                  onChange={(e) =>
-                                    handleUpdateDraftItem(
-                                      item.id,
-                                      'discount',
-                                      parseFloat(e.target.value) || 0
-                                    )
-                                  }
-                                  className="liquid-input w-20 px-1.5 py-1 rounded-lg text-xs text-right"
-                                />
-                                <span className="text-[var(--text-muted)] font-normal">
-                                  (antes {formatCurrency(item.grossPrice, currency)})
-                                </span>
-                              </label>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* Subtotal, Discounts, Taxes & Grand Total Row */}
-                  <div className="pt-3 border-t border-[var(--glass-border)] grid grid-cols-2 sm:grid-cols-4 gap-3">
-                    <div className="liquid-glass-subtle rounded-lg p-2.5">
-                      <span className="text-[10px] uppercase text-[var(--text-muted)] block">
-                        Productos (con promos)
-                      </span>
-                      <span className="text-sm font-bold">
-                        {formatCurrency(itemsSubtotal, currency)}
-                      </span>
-                    </div>
-                    <div className="liquid-glass-subtle rounded-lg p-2.5">
-                      <span className="text-[10px] uppercase text-[var(--text-muted)] block">
-                        Otros descuentos (−₡)
-                      </span>
-                      <input
-                        type="number"
-                        step="50"
-                        value={discounts}
-                        onChange={(e) => setDiscounts(parseFloat(e.target.value) || 0)}
-                        className="bg-transparent font-bold text-sm text-emerald-600 dark:text-emerald-400 w-full focus:outline-none"
-                      />
-                    </div>
-                    <div className="liquid-glass-subtle rounded-lg p-2.5">
-                      <span className="text-[10px] uppercase text-[var(--text-muted)] block">
-                        <span className="flex items-center justify-between gap-1">
-                          IVA {taxesIncluded ? '(incluido)' : '(+₡)'}
-                          <label className="flex items-center gap-1 normal-case cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={taxesIncluded}
-                              onChange={(e) => setTaxesIncluded(e.target.checked)}
-                              className="accent-current"
-                            />
-                            incluido
-                          </label>
+                          </span>
                         </span>
-                      </span>
-                      <input
-                        type="number"
-                        step="50"
-                        value={taxes}
-                        onChange={(e) => setTaxes(parseFloat(e.target.value) || 0)}
-                        className="bg-transparent font-bold text-sm w-full focus:outline-none"
-                      />
-                    </div>
-                    <div className="liquid-glass-subtle rounded-lg p-2.5">
-                      <span className="text-[10px] uppercase text-[var(--text-muted)] block">
-                        Total Factura (₡)
-                      </span>
-                      <input
-                        type="number"
-                        step="50"
-                        value={receiptGrandTotal}
-                        onChange={(e) => setReceiptGrandTotal(parseFloat(e.target.value) || 0)}
-                        className={`bg-transparent font-extrabold text-sm w-full focus:outline-none ${
-                          hasMathDiscrepancy
-                            ? 'text-amber-600 dark:text-amber-400'
-                            : 'text-avocado-600 dark:text-avocado-400'
-                        }`}
-                      />
-                    </div>
-                  </div>
-                </div>
+                        <span className="text-[15px] font-semibold tabular-nums">{formatCurrency(item.totalPrice, currency)}</span>
+                        <ChevronDown className={`w-4 h-4 text-[var(--text-muted)] transition ${open ? 'rotate-180' : ''}`} />
+                      </button>
 
-                {/* Action Buttons: pinned to the bottom of the screen while scrolling */}
-                <div className="sticky bottom-0 z-10 -mx-4 sm:-mx-6 px-4 sm:px-6 py-3 flex flex-col-reverse sm:flex-row sm:items-center justify-between gap-2 sm:gap-3 bg-[var(--glass-bg-elevated,var(--bg-primary))] backdrop-blur-xl border-t border-[var(--glass-border)]">
-                  <button
-                    type="button"
-                    onClick={() => setStep('upload')}
-                    className="liquid-glass liquid-glass-interactive px-4 py-2.5 rounded-xl text-xs font-semibold"
-                  >
-                    ← Escanear otra
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleConfirmAndSave}
-                    className="liquid-lens-btn px-6 py-3 rounded-xl text-sm font-bold flex items-center justify-center gap-2"
-                  >
-                    <CheckCircle2 className="w-4 h-4" />
-                    {isEditing ? 'Guardar cambios' : 'Guardar compra'} ({formatCurrency(receiptGrandTotal, currency)})
-                  </button>
+                      {open && (
+                        <div className="px-4 pb-4 pt-1 space-y-4 border-t border-[var(--glass-border)]">
+                          {item.rawReceiptName && item.rawReceiptName !== 'MANUAL' && (
+                            <p className="pt-3 text-xs text-[var(--text-muted)]">
+                              En la factura: <span className="font-mono">{item.rawReceiptName}</span>
+                              {item.barcode && <span className="opacity-70"> · {item.barcode}</span>}
+                            </p>
+                          )}
+                          {(item.reviewReasons?.length ?? 0) > 0 && (
+                            <p className="text-sm text-amber-700 dark:text-amber-300">{item.reviewReasons?.join(' ')}</p>
+                          )}
+                          <div className="grid sm:grid-cols-2 gap-4 pt-1">
+                            <Field label="Producto" className="sm:col-span-2">
+                              {(id) => (
+                                <TextInput
+                                  id={id}
+                                  value={item.normalizedName}
+                                  onChange={(e) => handleUpdateDraftItem(item.id, 'normalizedName', e.target.value)}
+                                  placeholder="Ej. Leche Dos Pinos 1L"
+                                  autoComplete="off"
+                                  enterKeyHint="next"
+                                />
+                              )}
+                            </Field>
+                            <Field label="Cantidad">
+                              {() => (
+                                <Stepper
+                                  label="cantidad"
+                                  value={item.quantity}
+                                  min={0}
+                                  step={item.pricingMode === 'weight' ? 0.1 : 1}
+                                  onChange={(v) => handleUpdateDraftItem(item.id, 'quantity', v)}
+                                />
+                              )}
+                            </Field>
+                            <Field label="Unidad">
+                              {(id) => (
+                                <TextInput
+                                  id={id}
+                                  value={item.unit}
+                                  onChange={(e) => handleUpdateDraftItem(item.id, 'unit', e.target.value)}
+                                  placeholder="unid, kg, L…"
+                                  list="canastica-units"
+                                />
+                              )}
+                            </Field>
+                            <Field label="Precio por unidad">
+                              {(id) => (
+                                <MoneyInput
+                                  id={id}
+                                  symbol={symbol}
+                                  value={item.unitPrice}
+                                  onValueChange={(v) => handleUpdateDraftItem(item.id, 'unitPrice', v)}
+                                />
+                              )}
+                            </Field>
+                            <Field label="Total pagado" hint={item.discount > 0 ? `Ya con la promoción. Antes ${formatCurrency(item.grossPrice, currency)}.` : undefined}>
+                              {(id) => (
+                                <MoneyInput
+                                  id={id}
+                                  symbol={symbol}
+                                  value={item.totalPrice}
+                                  onValueChange={(v) => handleUpdateDraftItem(item.id, 'totalPrice', v)}
+                                  className="font-semibold"
+                                />
+                              )}
+                            </Field>
+                            {item.discount > 0 && (
+                              <Field label={item.discountLabel || 'Promoción'}>
+                                {(id) => (
+                                  <MoneyInput
+                                    id={id}
+                                    symbol={`−${symbol}`}
+                                    value={item.discount}
+                                    onValueChange={(v) => handleUpdateDraftItem(item.id, 'discount', v)}
+                                    className="pl-10"
+                                  />
+                                )}
+                              </Field>
+                            )}
+                            <Field label="Categoría">
+                              {(id) => (
+                                <SelectInput
+                                  id={id}
+                                  value={item.category}
+                                  onChange={(e) => handleUpdateDraftItem(item.id, 'category', e.target.value as GroceryCategory)}
+                                >
+                                  {categories.map((cat) => (
+                                    <option key={cat} value={cat}>
+                                      {translateCategory(cat, language)}
+                                    </option>
+                                  ))}
+                                </SelectInput>
+                              )}
+                            </Field>
+                            <Field label="¿De quién es?">
+                              {(id) => (
+                                <SelectInput
+                                  id={id}
+                                  value={item.isShared ? 'shared' : item.assignedTo ?? paidByMemberId}
+                                  onChange={(e) => setAssignee(item.id, e.target.value)}
+                                >
+                                  <option value="shared">De todo el hogar</option>
+                                  {members.map((m) => (
+                                    <option key={m.id} value={m.id}>
+                                      Solo de {m.name.split(' ')[0]}
+                                    </option>
+                                  ))}
+                                </SelectInput>
+                              )}
+                            </Field>
+                          </div>
+                          <div className="flex items-center justify-between gap-2 pt-1">
+                            <Button
+                              variant="danger"
+                              size="sm"
+                              onClick={() => setDraftItems((prev) => prev.filter((i) => i.id !== item.id))}
+                            >
+                              <Trash2 className="w-4 h-4" /> Quitar
+                            </Button>
+                            <Button variant="soft" size="sm" onClick={() => toggleExpanded(item.id)}>
+                              <Check className="w-4 h-4" /> Listo
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+              <Button variant="secondary" block onClick={addItemAndEdit}>
+                <Plus className="w-4 h-4" /> Agregar producto
+              </Button>
+              <datalist id="canastica-units">
+                <option value="unid" />
+                <option value="kg" />
+                <option value="g" />
+                <option value="L" />
+                <option value="ml" />
+                <option value="paquete" />
+                <option value="bolsa" />
+              </datalist>
+            </FormSection>
+
+            {/* Totals */}
+            <FormSection title="Totales">
+              <div className="rounded-2xl border border-[var(--glass-border)] divide-y divide-[var(--glass-border)]">
+                <div className="flex items-center justify-between px-4 min-h-12 text-sm">
+                  <span className="text-[var(--text-secondary)]">Productos (con promociones)</span>
+                  <span className="font-semibold tabular-nums">{formatCurrency(itemsSubtotal, currency)}</span>
+                </div>
+                <div className="px-4 py-3 grid grid-cols-[1fr_minmax(0,9.5rem)] items-center gap-3">
+                  <label htmlFor="scanner-discounts" className="text-sm text-[var(--text-secondary)]">
+                    Otros descuentos
+                  </label>
+                  <MoneyInput id="scanner-discounts" symbol={`−${symbol}`} value={discounts} onValueChange={setDiscounts} className="pl-10 text-right" />
+                </div>
+                <div className="px-4 py-3 grid grid-cols-[1fr_minmax(0,9.5rem)] items-center gap-3">
+                  <span className="text-sm text-[var(--text-secondary)] flex items-center gap-3">
+                    <Switch checked={taxesIncluded} onChange={setTaxesIncluded} label="IVA incluido en los precios" />
+                    <span>{taxesIncluded ? 'IVA incluido' : 'IVA aparte'}</span>
+                  </span>
+                  <MoneyInput id="scanner-taxes" symbol={symbol} value={taxes} onValueChange={setTaxes} className="text-right" aria-label="Monto de IVA" />
+                </div>
+                <div className="px-4 py-3 grid grid-cols-[1fr_minmax(0,9.5rem)] items-center gap-3">
+                  <label htmlFor="scanner-total" className="text-[15px] font-bold">
+                    Total de la factura
+                  </label>
+                  <MoneyInput
+                    id="scanner-total"
+                    symbol={symbol}
+                    value={receiptGrandTotal}
+                    onValueChange={setReceiptGrandTotal}
+                    className={`text-right font-bold ${hasMathDiscrepancy ? 'border-amber-500' : ''}`}
+                  />
                 </div>
               </div>
-            </div>
-          )}
+            </FormSection>
+          </div>
         </div>
-      </div>
-    </div>
+      )}
+    </Sheet>
   );
 };

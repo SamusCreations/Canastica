@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
 import { receiptFileKind } from '../utils/receiptFile';
-import { Calendar, Pencil, Store, Tag, Trash2, User, Users, X } from 'lucide-react';
+import { ChevronDown, FileText, Pencil, Store, Trash2 } from 'lucide-react';
 import { CurrencyCode, HouseholdMember, Purchase } from '../types/grocery';
 import { formatCurrency } from '../utils/formatters';
-import { Avatar } from './Avatar';
 import { InboundFile } from '../services/inboundInvoicesService';
 import { InvoiceFilesList } from './InvoiceFilesList';
+import { Sheet } from './ui/Sheet';
+import { Button } from './ui/Form';
 
 interface ReceiptDetailModalProps {
   purchase: Purchase | null;
@@ -19,6 +20,7 @@ interface ReceiptDetailModalProps {
   onOpenInvoiceFile?: (file: InboundFile, download: boolean) => void;
 }
 
+/** Read-only purchase detail with edit / delete. One scroll area; photo collapses on phones. */
 export const ReceiptDetailModal: React.FC<ReceiptDetailModalProps> = ({
   purchase,
   members,
@@ -37,210 +39,149 @@ export const ReceiptDetailModal: React.FC<ReceiptDetailModalProps> = ({
   // Costa Rican receipts usually print prices with IVA already included
   const taxesIncluded =
     purchase.taxes > 0 &&
-    (purchase.notes?.includes('IVA incluido') ||
-      Math.abs(purchase.subtotal - purchase.discounts - purchase.totalAmount) <= 2);
+    (purchase.notes?.includes('IVA incluido') || Math.abs(purchase.subtotal - purchase.discounts - purchase.totalAmount) <= 2);
+  const kind = purchase.receiptImageUrl ? receiptFileKind(purchase.receiptImageUrl) : null;
+
+  const photo = (
+    <div className="rounded-2xl bg-[var(--glass-bg-subtle)] border border-[var(--glass-border)] p-2 flex flex-col items-center gap-2">
+      {purchase.receiptImageUrl && kind !== 'image' ? (
+        <a
+          href={purchase.receiptImageUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="py-8 flex flex-col items-center gap-2 text-sm font-semibold text-avocado-700 dark:text-avocado-300"
+        >
+          <FileText className="w-10 h-10" />
+          {kind === 'xml' ? 'Abrir factura electrónica (XML)' : 'Abrir factura en PDF'}
+        </a>
+      ) : purchase.receiptImageUrl ? (
+        <a href={purchase.receiptImageUrl} target="_blank" rel="noreferrer" title="Abrir la foto completa">
+          <img
+            src={purchase.receiptImageUrl}
+            alt={`Factura ${purchase.supermarket}`}
+            className="max-w-full max-h-[60vh] object-contain rounded-xl"
+          />
+        </a>
+      ) : (
+        <p className="py-8 text-sm text-[var(--text-muted)]">Sin imagen de la factura</p>
+      )}
+      {invoiceFiles && invoiceFiles.length > 0 && onOpenInvoiceFile && (
+        <div className="w-full px-1 pb-1">
+          <p className="text-xs font-semibold text-[var(--text-secondary)]">Archivos originales del correo</p>
+          <InvoiceFilesList files={invoiceFiles} onOpen={onOpenInvoiceFile} />
+        </div>
+      )}
+    </div>
+  );
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-md animate-spring-in">
-      <div className="liquid-glass-elevated w-full max-w-4xl rounded-2xl overflow-hidden max-h-[90vh] flex flex-col">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--glass-border)]">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl liquid-glass-subtle flex items-center justify-center text-avocado-600 dark:text-avocado-400">
-              <Store className="w-5 h-5" />
-            </div>
-            <div>
-              <h3 className="text-base font-bold">{purchase.supermarket} — Factura Registrada</h3>
-              <p className="text-xs text-[var(--text-muted)] flex items-center gap-2">
-                <Calendar className="w-3.5 h-3.5" /> {purchase.purchaseDate} • Pagado por{' '}
-                {buyer?.name || 'Miembro del Hogar'}
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            {onEdit && (
-              <button
-                onClick={() => onEdit(purchase)}
-                className="px-3 py-2 rounded-xl liquid-glass liquid-glass-interactive text-xs font-bold flex items-center gap-1.5"
-              >
-                <Pencil className="w-4 h-4" /> <span className="hidden sm:inline">Editar factura</span>
-              </button>
-            )}
-            {onDelete && (
-              <button
-                onClick={() => setConfirmingDeleteId(purchase.id)}
-                className="px-3 py-2 rounded-xl liquid-glass liquid-glass-interactive text-xs font-bold flex items-center gap-1.5 text-rose-600 dark:text-rose-400"
-              >
-                <Trash2 className="w-4 h-4" /> <span className="hidden sm:inline">Eliminar</span>
-              </button>
-            )}
-            <button
-              onClick={onClose}
-              className="p-2 rounded-xl liquid-glass liquid-glass-interactive"
-              aria-label="Cerrar"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          </div>
-        </div>
-
-        {confirmingDelete && onDelete && (
-          <div className="mx-6 mt-4 p-4 rounded-xl border border-rose-500/40 bg-rose-500/10 flex flex-col sm:flex-row sm:items-center gap-3 animate-spring-in">
-            <p className="text-xs text-rose-700 dark:text-rose-300 flex-1">
-              ¿Eliminar la factura de <strong>{purchase.supermarket}</strong> del {purchase.purchaseDate} por{' '}
-              <strong>{formatCurrency(purchase.totalAmount, currency)}</strong>? Esta acción no se puede deshacer.
+    <Sheet
+      onClose={onClose}
+      title={purchase.supermarket}
+      subtitle={`${purchase.purchaseDate} · pagó ${buyer?.name.split(' ')[0] || 'un miembro'}`}
+      icon={<Store className="w-5 h-5" />}
+      size="lg"
+      footer={
+        confirmingDelete && onDelete ? (
+          <div className="space-y-3">
+            <p className="text-sm">
+              ¿Eliminar esta compra de <strong>{formatCurrency(purchase.totalAmount, currency)}</strong>? No se puede deshacer.
             </p>
-            <div className="flex gap-2 shrink-0">
-              <button
-                onClick={() => setConfirmingDeleteId(null)}
-                className="px-3 py-2 rounded-lg liquid-glass liquid-glass-interactive text-xs font-semibold"
-              >
+            <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+              <Button variant="secondary" size="lg" onClick={() => setConfirmingDeleteId(null)}>
                 Cancelar
-              </button>
-              <button
+              </Button>
+              <Button
+                size="lg"
+                className="!bg-coral-500 hover:!bg-coral-400"
                 onClick={() => {
                   setConfirmingDeleteId(null);
                   onDelete(purchase);
                 }}
-                className="px-3 py-2 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold"
               >
-                Sí, eliminar
-              </button>
+                <Trash2 className="w-4 h-4" /> Sí, eliminar
+              </Button>
             </div>
           </div>
-        )}
-
-        <div className="p-6 overflow-y-auto grid grid-cols-1 md:grid-cols-12 gap-6">
-          {/* Original Stored Receipt Image */}
-          <div className="md:col-span-5 liquid-glass-subtle rounded-xl p-3 flex flex-col items-center">
-            <span className="text-xs font-semibold text-[var(--text-secondary)] mb-2">
-              Imagen Original de la Factura
-            </span>
-            {purchase.receiptImageUrl && receiptFileKind(purchase.receiptImageUrl) !== 'image' ? (
-              <a
-                href={purchase.receiptImageUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="py-10 text-xs font-semibold text-avocado-700 dark:text-avocado-300 underline"
-              >
-                {receiptFileKind(purchase.receiptImageUrl) === 'xml' ? 'Abrir factura electrónica (XML)' : 'Abrir factura en PDF'}
-              </a>
-            ) : purchase.receiptImageUrl ? (
-              <img
-                src={purchase.receiptImageUrl}
-                alt={`Factura ${purchase.supermarket}`}
-                className="max-w-full h-auto rounded-lg shadow-sm"
-              />
-            ) : (
-              <p className="py-10 text-xs text-[var(--text-muted)]">Sin imagen de la factura</p>
+        ) : onEdit || onDelete ? (
+          <div className="flex gap-2">
+            {onDelete && (
+              <Button variant="danger" size="lg" onClick={() => setConfirmingDeleteId(purchase.id)} aria-label="Eliminar compra">
+                <Trash2 className="w-5 h-5" />
+                <span className="hidden sm:inline">Eliminar</span>
+              </Button>
             )}
-            {invoiceFiles && invoiceFiles.length > 0 && onOpenInvoiceFile && (
-              <div className="w-full mt-2">
-                <span className="text-xs font-semibold text-[var(--text-secondary)]">Archivos originales del correo</span>
-                <InvoiceFilesList files={invoiceFiles} onOpen={onOpenInvoiceFile} />
-              </div>
+            {onEdit && (
+              <Button size="lg" className="flex-1 sm:flex-none sm:ml-auto" onClick={() => onEdit(purchase)}>
+                <Pencil className="w-4 h-4" /> Editar compra
+              </Button>
             )}
           </div>
+        ) : undefined
+      }
+    >
+      <div className="md:grid md:grid-cols-[minmax(0,260px)_minmax(0,1fr)] md:gap-6 md:items-start space-y-4 md:space-y-0">
+        <aside className="hidden md:block md:sticky md:top-0">{photo}</aside>
 
-          {/* Itemized Breakdown */}
-          <div className="md:col-span-7 flex flex-col justify-between space-y-4">
-            <div className="space-y-2.5">
-              <div className="flex items-center justify-between">
-                <h4 className="text-sm font-bold">
-                  Productos Normalizados ({purchase.items.length})
-                </h4>
-                {buyer && (
-                  <div className="flex items-center gap-2 px-3 py-1 rounded-full liquid-glass-subtle text-xs font-semibold">
-                    <Avatar name={buyer.name} src={buyer.avatarUrl} color={buyer.accentColor} className="w-4 h-4" />
-                    <span>{buyer.name}</span>
-                  </div>
-                )}
-              </div>
-
-              <div className="space-y-2 max-h-[340px] overflow-y-auto pr-1">
-                {purchase.items.map((item) => (
-                  <div
-                    key={item.id}
-                    className="liquid-glass-subtle rounded-xl p-3 flex items-center justify-between gap-3"
-                  >
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="font-bold text-xs truncate">
-                          {item.normalizedName}
-                        </span>
-                        <span
-                          className={`text-[10px] font-semibold px-2 py-0.5 rounded-full flex items-center gap-1 ${
-                            item.isShared
-                              ? 'bg-avocado-500/15 text-avocado-600 dark:text-avocado-400'
-                              : 'bg-purple-500/15 text-purple-600 dark:text-purple-400'
-                          }`}
-                        >
-                          {item.isShared ? (
-                            <>
-                              <Users className="w-2.5 h-2.5" /> Compartido
-                            </>
-                          ) : (
-                            <>
-                              <User className="w-2.5 h-2.5" /> Personal
-                              {(() => {
-                                const owner = members.find((m) => m.id === (item.assignedTo ?? purchase.createdBy));
-                                return owner ? `: ${owner.name.split(' ')[0]}` : '';
-                              })()}
-                            </>
-                          )}
-                        </span>
-                      </div>
-                      <div className="text-[11px] text-[var(--text-muted)] flex flex-wrap items-center gap-2 mt-0.5">
-                        <span className="font-mono text-[10px]">
-                          Factura: {item.rawReceiptName}
-                        </span>
-                        <span>•</span>
-                        <span className="flex items-center gap-1 text-avocado-600 dark:text-avocado-400 font-medium">
-                          <Tag className="w-3 h-3" /> {item.canonicalName}
-                        </span>
-                        <span>•</span>
-                        <span>
-                          {item.quantity} {item.unit} ({item.baseUnitQuantity.toLocaleString('es-CR')}{' '}
-                          {item.baseUnit})
-                        </span>
-                      </div>
-                    </div>
-                    <div className="text-right shrink-0">
-                      <div className="text-xs font-extrabold text-emerald-600 dark:text-emerald-400">
-                        {formatCurrency(item.totalPrice, currency)}
-                      </div>
-                      <div className="text-[10px] text-[var(--text-muted)]">
-                        {formatCurrency(item.unitPrice, currency)} / {item.unit === 'kg' ? 'kg' : 'unid'}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="liquid-glass-subtle rounded-xl p-4 space-y-1.5 text-xs">
-              <div className="flex justify-between text-[var(--text-secondary)]">
-                <span>Subtotal</span>
-                <span>{formatCurrency(purchase.subtotal, currency)}</span>
-              </div>
-              <div className="flex justify-between text-emerald-600 dark:text-emerald-400 font-medium">
-                <span>Descuentos</span>
-                <span>−{formatCurrency(purchase.discounts, currency)}</span>
-              </div>
-              <div className="flex justify-between text-[var(--text-secondary)]">
-                <span>{taxesIncluded ? 'IVA (incluido en los precios)' : 'Impuestos (IVA)'}</span>
-                <span>
-                  {taxesIncluded ? '' : '+'}
-                  {formatCurrency(purchase.taxes, currency)}
+        <div className="space-y-4 min-w-0">
+          {(purchase.receiptImageUrl || (invoiceFiles && invoiceFiles.length > 0)) && (
+            <details className="md:hidden group rounded-2xl border border-[var(--glass-border)]">
+              <summary className="list-none cursor-pointer min-h-12 px-4 flex items-center justify-between text-sm font-semibold">
+                <span className="flex items-center gap-2">
+                  <FileText className="w-4 h-4 text-avocado-600" /> Ver la factura original
                 </span>
-              </div>
-              <div className="flex justify-between text-sm font-extrabold pt-2 border-t border-[var(--glass-border)] text-avocado-600 dark:text-avocado-400">
-                <span>Total General</span>
-                <span>{formatCurrency(purchase.totalAmount, currency)}</span>
-              </div>
+                <ChevronDown className="w-4 h-4 text-[var(--text-muted)] transition group-open:rotate-180" />
+              </summary>
+              <div className="px-2 pb-2">{photo}</div>
+            </details>
+          )}
+
+          <section>
+            <h3 className="text-sm font-bold mb-1">Productos ({purchase.items.length})</h3>
+            <ul className="divide-y divide-[var(--glass-border)]">
+              {purchase.items.map((item) => {
+                const owner = item.isShared ? null : members.find((m) => m.id === (item.assignedTo ?? purchase.createdBy));
+                return (
+                  <li key={item.id} className="py-3 flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-[15px] font-medium truncate">{item.normalizedName}</p>
+                      <p className="text-xs text-[var(--text-muted)]">
+                        {item.quantity} {item.unit} · {formatCurrency(item.unitPrice, currency)} c/u
+                        {owner ? ` · de ${owner.name.split(' ')[0]}` : ''}
+                      </p>
+                    </div>
+                    <span className="text-[15px] font-semibold tabular-nums shrink-0">{formatCurrency(item.totalPrice, currency)}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+
+          <section className="rounded-2xl bg-[var(--glass-bg-subtle)] p-4 space-y-2 text-sm">
+            <div className="flex justify-between text-[var(--text-secondary)]">
+              <span>Subtotal</span>
+              <span className="tabular-nums">{formatCurrency(purchase.subtotal, currency)}</span>
             </div>
-          </div>
+            {purchase.discounts > 0 && (
+              <div className="flex justify-between text-avocado-700 dark:text-avocado-300">
+                <span>Descuentos</span>
+                <span className="tabular-nums">−{formatCurrency(purchase.discounts, currency)}</span>
+              </div>
+            )}
+            <div className="flex justify-between text-[var(--text-secondary)]">
+              <span>{taxesIncluded ? 'IVA (incluido)' : 'IVA'}</span>
+              <span className="tabular-nums">
+                {taxesIncluded ? '' : '+'}
+                {formatCurrency(purchase.taxes, currency)}
+              </span>
+            </div>
+            <div className="flex justify-between text-base font-bold pt-2 border-t border-[var(--glass-border)]">
+              <span>Total</span>
+              <span className="tabular-nums">{formatCurrency(purchase.totalAmount, currency)}</span>
+            </div>
+          </section>
         </div>
       </div>
-    </div>
+    </Sheet>
   );
 };

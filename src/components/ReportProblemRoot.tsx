@@ -1,5 +1,7 @@
 import React, { useRef, useState, useSyncExternalStore } from 'react';
 import { CheckCircle2, ImagePlus, Loader2, MessageSquareWarning, Send, X } from 'lucide-react';
+import { Sheet } from './ui/Sheet';
+import { Button } from './ui/Form';
 import {
   closeReportProblem,
   getReportProblemRequest,
@@ -81,52 +83,41 @@ function ReportProblemSheet({ request }: { request: ReportProblemRequest }) {
   };
 
   return (
-    <div className="fixed inset-0 z-[85] flex items-end sm:items-center justify-center sm:p-4">
-      <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={closeReportProblem} />
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="report-problem-title"
-        className="relative liquid-glass-elevated w-full sm:max-w-lg rounded-t-3xl sm:rounded-2xl overflow-hidden max-h-[92dvh] flex flex-col animate-spring-in"
-      >
-        <div className="px-4 sm:px-5 py-3.5 border-b border-[var(--glass-border)] flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3 min-w-0">
-            <div className="w-10 h-10 rounded-xl bg-rose-500/15 text-rose-600 dark:text-rose-400 flex items-center justify-center shrink-0">
-              <MessageSquareWarning className="w-5 h-5" />
-            </div>
-            <div className="min-w-0">
-              <h3 id="report-problem-title" className="text-base font-bold truncate">
-                {t.title}
-              </h3>
-              <p className="text-xs text-[var(--text-muted)] truncate">{t.subtitle}</p>
-            </div>
-          </div>
-          <button
-            onClick={closeReportProblem}
-            className="w-10 h-10 rounded-xl liquid-glass-subtle liquid-glass-interactive flex items-center justify-center shrink-0"
-            aria-label={t.close}
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-
+    <Sheet
+      onClose={closeReportProblem}
+      title={t.title}
+      subtitle={t.subtitle}
+      icon={<MessageSquareWarning className="w-5 h-5" />}
+      size="md"
+      zIndex="z-[85]"
+      footer={
+        status === 'sent' ? (
+          <Button size="lg" block onClick={closeReportProblem}>
+            {t.close}
+          </Button>
+        ) : (
+          <Button type="submit" form="report-problem-form" size="lg" block disabled={!canSend}>
+            {status === 'sending' ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" /> {t.sending}
+              </>
+            ) : (
+              <>
+                <Send className="w-4 h-4" /> {t.send}
+              </>
+            )}
+          </Button>
+        )
+      }
+    >
         {status === 'sent' ? (
-          <div className="p-6 text-center space-y-3 pb-[calc(env(safe-area-inset-bottom)+24px)]">
+          <div className="py-6 text-center space-y-3">
             <CheckCircle2 className="w-12 h-12 mx-auto text-emerald-500" />
             <p className="text-base font-bold">{t.thanks}</p>
             <p className="text-sm text-[var(--text-muted)]">{t.thanksBody}</p>
-            <button
-              onClick={closeReportProblem}
-              className="w-full liquid-lens-btn min-h-[48px] rounded-xl text-base font-bold"
-            >
-              {t.close}
-            </button>
           </div>
         ) : (
-          <form
-            onSubmit={submit}
-            className="p-4 sm:p-5 overflow-y-auto space-y-4 pb-[calc(env(safe-area-inset-bottom)+16px)]"
-          >
+          <form id="report-problem-form" onSubmit={submit} className="space-y-4">
             <label className="block space-y-1.5">
               <span className="text-sm font-semibold text-[var(--text-secondary)]">{t.label}</span>
               <textarea
@@ -135,7 +126,7 @@ function ReportProblemSheet({ request }: { request: ReportProblemRequest }) {
                 maxLength={MAX_CHARS}
                 rows={5}
                 placeholder={t.placeholder}
-                className="liquid-input w-full px-3.5 py-2.5 rounded-xl text-sm resize-y min-h-[120px]"
+                className="w-full min-h-[120px] rounded-xl bg-[var(--input-glass-bg)] border border-[var(--input-border)] px-3.5 py-3 text-[15px] leading-relaxed resize-y focus:outline-none focus:border-avocado-500 focus:ring-4 focus:ring-avocado-500/15"
               />
               <span className="flex justify-between text-[11px] text-[var(--text-muted)]">
                 <span>{trimmedLength > 0 && trimmedLength < MIN_CHARS ? t.tooShort(trimmedLength) : ''}</span>
@@ -185,25 +176,9 @@ function ReportProblemSheet({ request }: { request: ReportProblemRequest }) {
               <div className="p-3 rounded-xl bg-rose-500/10 text-sm text-rose-700 dark:text-rose-300">{error}</div>
             )}
 
-            <button
-              type="submit"
-              disabled={!canSend}
-              className="w-full liquid-lens-btn min-h-[48px] rounded-xl text-base font-bold flex items-center justify-center gap-2 disabled:opacity-50"
-            >
-              {status === 'sending' ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" /> {t.sending}
-                </>
-              ) : (
-                <>
-                  <Send className="w-4 h-4" /> {t.send}
-                </>
-              )}
-            </button>
           </form>
         )}
-      </div>
-    </div>
+    </Sheet>
   );
 }
 

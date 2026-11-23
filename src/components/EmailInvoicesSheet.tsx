@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { Check, Copy, KeyRound, Loader2, Mail, Pencil, RefreshCw, Store, X } from 'lucide-react';
+import { Check, Copy, KeyRound, Loader2, Mail, Pencil, RefreshCw, Store } from 'lucide-react';
+import { Sheet } from './ui/Sheet';
 import {
   AliasCheck,
   aliasAddress,
@@ -160,31 +161,15 @@ export const EmailInvoicesSheet: React.FC<EmailInvoicesSheetProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center">
-      <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={onClose} />
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label="Facturas por correo"
-        className="relative w-full sm:max-w-md max-h-[90dvh] overflow-y-auto liquid-glass-elevated rounded-t-3xl sm:rounded-2xl p-4 pb-[calc(env(safe-area-inset-bottom)+16px)] space-y-4 animate-spring-in"
-      >
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl liquid-lens-btn flex items-center justify-center text-white shrink-0">
-            <Mail className="w-4 h-4" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-base font-bold">Facturas por correo</p>
-            <p className="text-xs text-[var(--text-muted)]">Reenvía tus facturas electrónicas y aparecen aquí para aprobarlas.</p>
-          </div>
-          <button
-            onClick={onClose}
-            className="w-10 h-10 rounded-xl liquid-glass-subtle liquid-glass-interactive flex items-center justify-center shrink-0"
-            aria-label="Cerrar"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-
+    <Sheet
+      onClose={onClose}
+      title="Facturas por correo"
+      subtitle="Reenvía tus facturas electrónicas y aparecen aquí para aprobarlas."
+      icon={<Mail className="w-5 h-5" />}
+      size="sm"
+      zIndex="z-[70]"
+    >
+      <div className="space-y-4">
         {mailbox === undefined ? (
           <Loader2 className="w-5 h-5 animate-spin mx-auto text-[var(--text-muted)]" />
         ) : !active ? (
@@ -373,6 +358,6 @@ export const EmailInvoicesSheet: React.FC<EmailInvoicesSheetProps> = ({
           </>
         )}
       </div>
-    </div>
+    </Sheet>
   );
 };

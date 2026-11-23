@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { Loader2, Mail, Newspaper } from 'lucide-react';
+import { Button, Field, Segmented, SwitchRow } from './ui/Form';
 
 type Frequency = 'weekly' | 'monthly' | 'none';
 
@@ -66,49 +67,40 @@ export const SummarySettings: React.FC<SummarySettingsProps> = ({ sb, userId, ho
   };
 
   return (
-    <div className="space-y-1.5 pt-1 border-t border-[var(--glass-border)]">
-      <p className="text-xs font-semibold text-[var(--text-muted)] flex items-center gap-1.5 pt-1">
-        <Newspaper className="w-3.5 h-3.5" /> Resumen del hogar
-      </p>
-      <div className="grid grid-cols-3 gap-1 p-1 rounded-xl liquid-glass-subtle">
-        {OPTIONS.map((o) => (
-          <button
-            key={o.value}
+    <div className="space-y-4">
+      <Field label="¿Cada cuánto quieres el resumen del hogar?">
+        {() => (
+          <Segmented
+            aria-label="Frecuencia del resumen"
+            value={frequency}
             disabled={!loaded}
-            onClick={() => {
-              setFrequency(o.value);
-              save({ summary_frequency: o.value });
+            onChange={(v) => {
+              setFrequency(v);
+              save({ summary_frequency: v });
             }}
-            aria-pressed={frequency === o.value}
-            className={`min-h-[40px] rounded-lg text-sm font-bold transition ${
-              frequency === o.value ? 'liquid-lens-btn' : 'text-[var(--text-secondary)]'
-            }`}
-          >
-            {o.label}
-          </button>
-        ))}
-      </div>
+            options={OPTIONS}
+          />
+        )}
+      </Field>
       {frequency !== 'none' && (
         <>
-          <label className="flex items-center gap-2.5 min-h-[44px] px-1 text-sm font-medium">
-            <input
-              type="checkbox"
-              checked={byEmail}
-              onChange={(e) => {
-                setByEmail(e.target.checked);
-                save({ summary_email: e.target.checked });
-              }}
-              className="w-5 h-5 accent-[#4f7f27]"
-            />
-            <Mail className="w-4 h-4 text-[var(--text-muted)]" /> También por correo
-          </label>
-          <button
-            onClick={() => void sendTest()}
-            disabled={sending}
-            className="w-full min-h-[40px] text-xs font-semibold text-avocado-700 dark:text-avocado-400 text-left px-1 flex items-center gap-1.5"
-          >
-            {sending && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Enviarme un resumen de prueba
-          </button>
+          <SwitchRow
+            label={
+              <span className="inline-flex items-center gap-2">
+                <Mail className="w-4 h-4 text-[var(--text-muted)]" /> También por correo
+              </span>
+            }
+            description="Por notificación llega si las tienes activadas en este dispositivo."
+            checked={byEmail}
+            onChange={(v) => {
+              setByEmail(v);
+              save({ summary_email: v });
+            }}
+          />
+          <Button variant="soft" size="sm" onClick={() => void sendTest()} disabled={sending}>
+            {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Newspaper className="w-4 h-4" />} Enviarme un
+            resumen de prueba
+          </Button>
         </>
       )}
     </div>
